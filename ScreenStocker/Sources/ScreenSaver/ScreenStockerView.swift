@@ -4,7 +4,6 @@ import ScreenSaver
 @objc(ScreenStockerView)
 final class ScreenStockerView: ScreenSaverView {
     private let preferences = StockerPreferences()
-    private lazy var provider = DemoStockQuoteProvider(symbols: preferences.symbols)
     private lazy var renderer = StockTickerRenderer(bounds: bounds)
     private var configurationController: ConfigurationWindowController?
 
@@ -52,10 +51,12 @@ final class ScreenStockerView: ScreenSaverView {
         if configurationController == nil {
             configurationController = ConfigurationWindowController(preferences: preferences)
         }
+        configurationController?.reloadSymbols()
         return configurationController?.window
     }
 
     private func refreshQuotes() {
+        let provider = DemoStockQuoteProvider(symbols: preferences.symbols)
         provider.fetchQuotes { [weak self] quotes in
             DispatchQueue.main.async {
                 self?.renderer.render(quotes: quotes)
@@ -63,4 +64,3 @@ final class ScreenStockerView: ScreenSaverView {
         }
     }
 }
-

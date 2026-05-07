@@ -31,6 +31,24 @@ targets:
         SKIP_INSTALL: "NO"
         INSTALL_PATH: "$(HOME)/Library/Screen Savers"
 
+  ScreenStockerApp:
+    type: application
+    platform: macOS
+    productName: ScreenStocker Manager
+    sources:
+      - path: ScreenStockerApp/Sources
+      - path: ScreenStockerApp/Resources
+      - path: ScreenStocker/Sources/Preferences
+      - path: ScreenStocker/Sources/Stocks
+    dependencies:
+      - sdk: AppKit.framework
+      - sdk: ScreenSaver.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.lukeoh.ScreenStockerApp
+        PRODUCT_NAME: ScreenStocker Manager
+        INFOPLIST_FILE: ScreenStockerApp/Resources/Info.plist
+
   ScreenStockerTests:
     type: bundle.unit-test
     platform: macOS
@@ -38,4 +56,3 @@ targets:
       - path: Tests/ScreenStockerTests
     dependencies:
       - target: ScreenStocker
-
