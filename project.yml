@@ -1,0 +1,41 @@
+name: ScreenStocker
+options:
+  bundleIdPrefix: com.lukeoh
+  deploymentTarget:
+    macOS: "13.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MACOSX_DEPLOYMENT_TARGET: "13.0"
+    CODE_SIGN_STYLE: Automatic
+
+targets:
+  ScreenStocker:
+    type: bundle
+    platform: macOS
+    productName: ScreenStocker
+    sources:
+      - path: ScreenStocker/Sources
+      - path: ScreenStocker/Resources
+    dependencies:
+      - sdk: AppKit.framework
+      - sdk: ScreenSaver.framework
+      - sdk: QuartzCore.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.lukeoh.ScreenStocker
+        INFOPLIST_FILE: ScreenStocker/Resources/Info.plist
+        WRAPPER_EXTENSION: saver
+        SKIP_INSTALL: "NO"
+        INSTALL_PATH: "$(HOME)/Library/Screen Savers"
+
+  ScreenStockerTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/ScreenStockerTests
+    dependencies:
+      - target: ScreenStocker
+
