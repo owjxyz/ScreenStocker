@@ -21,6 +21,7 @@ targets:
       - path: ScreenStocker/Resources
     dependencies:
       - sdk: AppKit.framework
+      - sdk: Charts.framework
       - sdk: ScreenSaver.framework
       - sdk: QuartzCore.framework
       - sdk: Security.framework
@@ -29,6 +30,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.lukeoh.ScreenStocker
         INFOPLIST_FILE: ScreenStocker/Resources/Info.plist
         WRAPPER_EXTENSION: saver
+        ENABLE_DEBUG_DYLIB: "NO"
         SKIP_INSTALL: "NO"
         INSTALL_PATH: "$(HOME)/Library/Screen Savers"
 
@@ -50,6 +52,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.lukeoh.ScreenStockerApp
         PRODUCT_NAME: ScreenStocker
         INFOPLIST_FILE: ScreenStockerApp/Resources/Info.plist
+        ENABLE_DEBUG_DYLIB: "NO"
 
   ScreenStockerTests:
     type: bundle.unit-test

@@ -7,6 +7,7 @@ final class WatchlistWindowController: NSWindowController, NSTableViewDataSource
     }
 
     private let preferences: StockerPreferences
+    private let installer = ScreenSaverInstaller()
     private var symbols: [String]
     private var searchResults: [StockSymbolSearchResult] = []
     private var selectedSection: Section = .watchlist
@@ -263,8 +264,8 @@ final class WatchlistWindowController: NSWindowController, NSTableViewDataSource
 
         symbols.append(symbol)
         inputField.stringValue = ""
-        tableView.reloadData()
-        updateStatus(message: "Added \(symbol). Apply to update the screen saver dropdown.")
+        saveWatchlist()
+        updateStatus(message: "Added \(symbol). Screen saver dropdown updated.")
     }
 
     @objc private func searchSymbols() {
@@ -293,30 +294,30 @@ final class WatchlistWindowController: NSWindowController, NSTableViewDataSource
         guard symbols.indices.contains(selectedRow) else { return }
 
         let removedSymbol = symbols.remove(at: selectedRow)
-        tableView.reloadData()
-        updateStatus(message: "Removed \(removedSymbol). Apply to update the screen saver dropdown.")
+        saveWatchlist()
+        updateStatus(message: "Removed \(removedSymbol). Screen saver dropdown updated.")
     }
 
     @objc private func addDemoSet() {
-        for symbol in ["005930", "000660", "035420", "005380"] where !symbols.contains(symbol) {
+        for symbol in StockerPreferences.demoSymbols where !symbols.contains(symbol) {
             symbols.append(symbol)
         }
-        tableView.reloadData()
-        updateStatus(message: "Added demo symbols. Apply to update the screen saver dropdown.")
+        saveWatchlist()
+        updateStatus(message: "Added demo symbols. Screen saver dropdown updated.")
     }
 
     @objc private func applyChanges() {
-        preferences.registeredSymbols = symbols
         preferences.koreaInvestmentAppKey = appKeyField.stringValue
         preferences.koreaInvestmentAppSecret = appSecretField.stringValue
         appKeyField.stringValue = preferences.koreaInvestmentAppKey
         appSecretField.stringValue = preferences.koreaInvestmentAppSecret
-        if let selectedSymbol = preferences.selectedSymbol, !preferences.registeredSymbols.contains(selectedSymbol) {
-            preferences.selectedSymbol = nil
+        saveWatchlist()
+        do {
+            try installer.reinstall()
+            updateStatus(message: "Applied and reinstalled screen saver.")
+        } catch {
+            updateStatus(message: "Applied, but install failed: \(error.localizedDescription)")
         }
-        symbols = preferences.registeredSymbols
-        tableView.reloadData()
-        updateStatus(message: "Applied. Screen saver dropdown and preview will refresh.")
     }
 
     @objc private func clearAPIKey() {
@@ -368,6 +369,15 @@ final class WatchlistWindowController: NSWindowController, NSTableViewDataSource
 
     private func updateStatus(message: String) {
         statusLabel.stringValue = message
+    }
+
+    private func saveWatchlist() {
+        preferences.registeredSymbols = symbols
+        if let selectedSymbol = preferences.selectedSymbol, !preferences.registeredSymbols.contains(selectedSymbol) {
+            preferences.selectedSymbol = nil
+        }
+        symbols = preferences.registeredSymbols
+        tableView.reloadData()
     }
 
     private func showSearchResults() {

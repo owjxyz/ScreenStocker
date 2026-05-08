@@ -1,5 +1,7 @@
 import AppKit
+import Charts
 import QuartzCore
+import SwiftUI
 
 final class StockTickerRenderer {
     private let rootLayer = CALayer()
@@ -8,9 +10,8 @@ final class StockTickerRenderer {
     private let changeLayer = CATextLayer()
     private let highLayer = CATextLayer()
     private let lowLayer = CATextLayer()
-    private let chartLayer = CAShapeLayer()
-    private let baselineLayer = CAShapeLayer()
     private let endpointLayer = CAShapeLayer()
+    private var chartHostingView: NSHostingView<StockTickerChartView>?
     private var quote: StockQuote?
     private var series: StockChartSeries?
     private var bounds: CGRect
@@ -27,15 +28,6 @@ final class StockTickerRenderer {
         configureTextLayer(highLayer, fontSize: 22, weight: .semibold, color: .systemRed)
         configureTextLayer(lowLayer, fontSize: 22, weight: .semibold, color: .systemRed)
 
-        chartLayer.fillColor = NSColor.clear.cgColor
-        chartLayer.lineCap = .round
-        chartLayer.lineJoin = .round
-
-        baselineLayer.strokeColor = NSColor.white.withAlphaComponent(0.24).cgColor
-        baselineLayer.fillColor = NSColor.clear.cgColor
-        baselineLayer.lineWidth = 1.5
-        baselineLayer.lineDashPattern = [8, 9]
-
         endpointLayer.fillColor = NSColor.systemRed.cgColor
         endpointLayer.strokeColor = NSColor.clear.cgColor
         endpointLayer.shadowColor = NSColor.white.cgColor
@@ -43,12 +35,20 @@ final class StockTickerRenderer {
         endpointLayer.shadowRadius = 18
         endpointLayer.shadowOpacity = 0.85
 
-        [baselineLayer, chartLayer, endpointLayer, symbolLayer, priceLayer, changeLayer, highLayer, lowLayer]
+        [endpointLayer, symbolLayer, priceLayer, changeLayer, highLayer, lowLayer]
             .forEach(rootLayer.addSublayer)
     }
 
     func attach(to view: NSView) {
         view.layer?.addSublayer(rootLayer)
+        let hostingView = NSHostingView(rootView: StockTickerChartView(configuration: nil))
+        hostingView.wantsLayer = true
+        hostingView.layer?.backgroundColor = NSColor.clear.cgColor
+        hostingView.translatesAutoresizingMaskIntoConstraints = true
+        hostingView.autoresizingMask = []
+        hostingView.isHidden = true
+        view.addSubview(hostingView)
+        chartHostingView = hostingView
         resize(to: view.bounds)
     }
 
@@ -108,8 +108,7 @@ final class StockTickerRenderer {
         changeLayer.foregroundColor = lineColor.cgColor
         changeLayer.frame = CGRect(x: sideInset, y: bounds.height - topInset - 44 - priceHeight - 42, width: bounds.width - sideInset * 2, height: 38)
 
-        chartLayer.strokeColor = lineColor.cgColor
-        chartLayer.lineWidth = max(min(bounds.width, bounds.height) * 0.006, 4)
+        let chartLineWidth = max(min(bounds.width, bounds.height) * 0.006, 4)
         endpointLayer.fillColor = lineColor.withAlphaComponent(0.92).cgColor
         highLayer.foregroundColor = lineColor.cgColor
         lowLayer.foregroundColor = lineColor.cgColor
@@ -119,10 +118,10 @@ final class StockTickerRenderer {
             return
         }
 
-        drawChart(series: series, in: chartFrame, color: lineColor)
+        drawChart(series: series, in: chartFrame, color: lineColor, lineWidth: chartLineWidth)
     }
 
-    private func drawChart(series: StockChartSeries, in chartFrame: CGRect, color: NSColor) {
+    private func drawChart(series: StockChartSeries, in chartFrame: CGRect, color: NSColor, lineWidth: CGFloat) {
         let chartPoints = intradayChartPoints(from: series) ?? indexedChartPoints(from: series)
         let closes = chartPoints.map(\.point.close)
         guard let minClose = closes.min(),
@@ -136,24 +135,23 @@ final class StockTickerRenderer {
         let maxValue = decimalNumber(maxClose).doubleValue
         let valueRange = max(maxValue - minValue, 1)
 
-        let path = CGMutablePath()
         var latestPoint = CGPoint.zero
         var highPoint = CGPoint.zero
         var lowPoint = CGPoint.zero
+        let chartSamples = chartPoints.map { chartPoint in
+            StockTickerChartSample(
+                xRatio: Double(chartPoint.xRatio),
+                close: decimalNumber(chartPoint.point.close).doubleValue
+            )
+        }
 
-        for (index, chartPoint) in chartPoints.enumerated() {
+        for chartPoint in chartPoints {
             let point = chartPoint.point
             let value = decimalNumber(point.close).doubleValue
             let x = chartFrame.minX + chartPoint.xRatio * chartFrame.width
             let yRatio = CGFloat((value - minValue) / valueRange)
             let y = chartFrame.minY + yRatio * chartFrame.height
             let cgPoint = CGPoint(x: x, y: y)
-
-            if index == 0 {
-                path.move(to: cgPoint)
-            } else {
-                path.addLine(to: cgPoint)
-            }
 
             if point.close == maxClose {
                 highPoint = cgPoint
@@ -164,13 +162,18 @@ final class StockTickerRenderer {
             latestPoint = cgPoint
         }
 
-        chartLayer.path = path
-
-        let baselineY = chartFrame.minY + CGFloat((decimalNumber(firstClose).doubleValue - minValue) / valueRange) * chartFrame.height
-        let baselinePath = CGMutablePath()
-        baselinePath.move(to: CGPoint(x: chartFrame.minX, y: baselineY))
-        baselinePath.addLine(to: CGPoint(x: chartFrame.maxX, y: baselineY))
-        baselineLayer.path = baselinePath
+        chartHostingView?.frame = chartFrame
+        chartHostingView?.isHidden = false
+        chartHostingView?.rootView = StockTickerChartView(
+            configuration: StockTickerChartConfiguration(
+                samples: chartSamples,
+                baseline: decimalNumber(firstClose).doubleValue,
+                minValue: minValue,
+                maxValue: minValue + valueRange,
+                lineColor: Color(nsColor: color),
+                lineWidth: lineWidth
+            )
+        )
 
         let dotRadius = max(min(bounds.width, bounds.height) * 0.011, 9)
         endpointLayer.bounds = CGRect(x: 0, y: 0, width: dotRadius * 2, height: dotRadius * 2)
@@ -236,8 +239,8 @@ final class StockTickerRenderer {
     }
 
     private func clearChart() {
-        chartLayer.path = nil
-        baselineLayer.path = nil
+        chartHostingView?.isHidden = true
+        chartHostingView?.rootView = StockTickerChartView(configuration: nil)
         endpointLayer.path = nil
         highLayer.string = nil
         lowLayer.string = nil
@@ -270,5 +273,54 @@ final class StockTickerRenderer {
     private struct ChartPoint {
         let point: StockTimeSeriesPoint
         let xRatio: CGFloat
+    }
+}
+
+private struct StockTickerChartSample: Identifiable, Equatable {
+    let id = UUID()
+    let xRatio: Double
+    let close: Double
+}
+
+private struct StockTickerChartConfiguration: Equatable {
+    let samples: [StockTickerChartSample]
+    let baseline: Double
+    let minValue: Double
+    let maxValue: Double
+    let lineColor: Color
+    let lineWidth: CGFloat
+}
+
+private struct StockTickerChartView: View {
+    let configuration: StockTickerChartConfiguration?
+
+    var body: some View {
+        if let configuration {
+            Chart {
+                RuleMark(y: .value("Open", configuration.baseline))
+                    .foregroundStyle(.white.opacity(0.24))
+                    .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [8, 9]))
+
+                ForEach(configuration.samples) { sample in
+                    LineMark(
+                        x: .value("Session", sample.xRatio),
+                        y: .value("Close", sample.close)
+                    )
+                    .interpolationMethod(.linear)
+                    .foregroundStyle(configuration.lineColor)
+                    .lineStyle(StrokeStyle(lineWidth: configuration.lineWidth, lineCap: .round, lineJoin: .round))
+                }
+            }
+            .chartXScale(domain: 0...1)
+            .chartYScale(domain: configuration.minValue...configuration.maxValue)
+            .chartXAxis(.hidden)
+            .chartYAxis(.hidden)
+            .chartPlotStyle { plotArea in
+                plotArea.background(.clear)
+            }
+            .background(.clear)
+        } else {
+            Color.clear
+        }
     }
 }

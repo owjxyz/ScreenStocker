@@ -57,6 +57,11 @@ xcodebuild \
   -derivedDataPath "$DERIVED_DATA_PATH" \
   build
 
+mkdir -p "$APP_PATH/Contents/Resources"
+rm -rf "$APP_PATH/Contents/Resources/$PRODUCT_NAME"
+cp -R "$PRODUCT_PATH" "$APP_PATH/Contents/Resources/$PRODUCT_NAME"
+codesign --force --deep --sign - --timestamp=none "$APP_PATH"
+
 mkdir -p "$INSTALL_DIR"
 rm -rf "$INSTALL_PATH"
 cp -R "$PRODUCT_PATH" "$INSTALL_PATH"
@@ -64,6 +69,8 @@ cp -R "$PRODUCT_PATH" "$INSTALL_PATH"
 mkdir -p "$APP_INSTALL_DIR"
 rm -rf "$APP_INSTALL_PATH"
 cp -R "$APP_PATH" "$APP_INSTALL_PATH"
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
+  -f -R "$APP_INSTALL_PATH" >/dev/null 2>&1 || true
 
 echo "Installed $PRODUCT_NAME to $INSTALL_PATH"
 echo "Installed $APP_NAME to $APP_INSTALL_PATH"
