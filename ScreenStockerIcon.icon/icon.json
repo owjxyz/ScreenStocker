@@ -1,0 +1,83 @@
+{
+  "fill" : {
+    "automatic-gradient" : "extended-gray:0.00000,1.00000"
+  },
+  "groups" : [
+    {
+      "layers" : [
+
+      ],
+      "name" : "Chart",
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    },
+    {
+      "layers" : [
+        {
+          "fill-specializations" : [
+            {
+              "value" : {
+                "automatic-gradient" : "extended-srgb:0.00000,0.76471,0.81569,1.00000",
+                "orientation" : {
+                  "start" : {
+                    "x" : 0.206844124251497,
+                    "y" : 0.4631713136227545
+                  },
+                  "stop" : {
+                    "x" : 0.5872824663173652,
+                    "y" : 0.8727194049401198
+                  }
+                }
+              }
+            },
+            {
+              "appearance" : "dark",
+              "value" : {
+                "automatic-gradient" : "extended-srgb:0.00000,0.76471,0.81569,1.00000",
+                "orientation" : {
+                  "start" : {
+                    "x" : 0.206844124251497,
+                    "y" : 0.4631713136227545
+                  },
+                  "stop" : {
+                    "x" : 0.5872824663173652,
+                    "y" : 0.8727194049401198
+                  }
+                }
+              }
+            }
+          ],
+          "hidden" : false,
+          "image-name" : "graph-up-svgrepo-com.svg",
+          "name" : "graph-up-svgrepo-com",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "squares" : [
+      "macOS"
+    ]
+  }
+}
