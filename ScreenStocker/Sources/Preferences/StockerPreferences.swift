@@ -100,9 +100,7 @@ final class StockerPreferences {
             credentialStore.read(account: .appKey)
         }
         set {
-            credentialStore.save(newValue, account: .appKey)
-            syncDefaults()
-            notifyChanged()
+            try? saveKoreaInvestmentCredentials(appKey: newValue, appSecret: koreaInvestmentAppSecret)
         }
     }
 
@@ -111,14 +109,26 @@ final class StockerPreferences {
             credentialStore.read(account: .appSecret)
         }
         set {
-            credentialStore.save(newValue, account: .appSecret)
-            syncDefaults()
-            notifyChanged()
+            try? saveKoreaInvestmentCredentials(appKey: koreaInvestmentAppKey, appSecret: newValue)
         }
     }
 
     var koreaInvestmentCredentials: KoreaInvestmentCredentials {
         KoreaInvestmentCredentials(appKey: koreaInvestmentAppKey, appSecret: koreaInvestmentAppSecret)
+    }
+
+    func saveKoreaInvestmentCredentials(appKey: String, appSecret: String) throws {
+        let credentials = KoreaInvestmentCredentials(appKey: appKey, appSecret: appSecret)
+        try credentialStore.save(credentials.appKey, account: .appKey)
+        try credentialStore.save(credentials.appSecret, account: .appSecret)
+
+        let storedCredentials = koreaInvestmentCredentials
+        guard storedCredentials == credentials else {
+            throw CredentialStoreError.verificationFailed
+        }
+
+        syncDefaults()
+        notifyChanged()
     }
 
     private func migrateLegacyDefaultsIfNeeded() {
@@ -324,20 +334,32 @@ final class StockerPreferences {
             return value.trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
-        func save(_ value: String, account: Account) {
+        func save(_ value: String, account: Account) throws {
             let credential = value.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !credential.isEmpty else {
-                SecItemDelete(baseQuery(account: account) as CFDictionary)
+                let status = SecItemDelete(baseQuery(account: account) as CFDictionary)
+                guard status == errSecSuccess || status == errSecItemNotFound else {
+                    throw CredentialStoreError.keychainStatus(status)
+                }
                 return
             }
 
             let data = Data(credential.utf8)
             let attributes = [kSecValueData as String: data]
             let status = SecItemUpdate(baseQuery(account: account) as CFDictionary, attributes as CFDictionary)
-            if status == errSecItemNotFound {
+            switch status {
+            case errSecSuccess:
+                return
+            case errSecItemNotFound:
                 var item = baseQuery(account: account)
                 item[kSecValueData as String] = data
-                SecItemAdd(item as CFDictionary, nil)
+                item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+                let addStatus = SecItemAdd(item as CFDictionary, nil)
+                guard addStatus == errSecSuccess else {
+                    throw CredentialStoreError.keychainStatus(addStatus)
+                }
+            default:
+                throw CredentialStoreError.keychainStatus(status)
             }
         }
 
@@ -347,6 +369,23 @@ final class StockerPreferences {
                 kSecAttrService as String: service,
                 kSecAttrAccount as String: account.rawValue
             ]
+        }
+    }
+}
+
+private enum CredentialStoreError: LocalizedError {
+    case keychainStatus(OSStatus)
+    case verificationFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .keychainStatus(let status):
+            if let message = SecCopyErrorMessageString(status, nil) as String? {
+                return "Keychain error \(status): \(message)"
+            }
+            return "Keychain error \(status)"
+        case .verificationFailed:
+            return "Saved credentials could not be verified in Keychain."
         }
     }
 }

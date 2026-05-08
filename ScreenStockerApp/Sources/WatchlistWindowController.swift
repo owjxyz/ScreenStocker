@@ -4,30 +4,53 @@ final class WatchlistWindowController: NSWindowController, NSTableViewDataSource
     private enum Section {
         case watchlist
         case apiKey
+
+        var title: String {
+            switch self {
+            case .watchlist:
+                return "Watchlist"
+            case .apiKey:
+                return "API Keys"
+            }
+        }
+
+        var symbolName: String {
+            switch self {
+            case .watchlist:
+                return "star"
+            case .apiKey:
+                return "key"
+            }
+        }
     }
 
     private let preferences: StockerPreferences
     private let installer = ScreenSaverInstaller()
+    private let sidebarSections: [Section] = [.watchlist, .apiKey]
     private var symbols: [String]
     private var searchResults: [StockSymbolSearchResult] = []
     private var selectedSection: Section = .watchlist
 
     private let tableView = NSTableView()
+    private let sidebarTableView = NSTableView()
     private let inputField = NSTextField()
     private let appKeyField = NSSecureTextField()
     private let appSecretField = NSSecureTextField()
-    private let sidebarView = NSView()
-    private let watchlistButton = NSButton(title: "Watchlist", target: nil, action: nil)
-    private let apiKeyButton = NSButton(title: "API Keys", target: nil, action: nil)
+    private let sidebarView = NSVisualEffectView()
     private let watchlistView = NSView()
     private let apiKeyView = NSView()
     private let addButton = NSButton(title: "Add", target: nil, action: nil)
     private let searchButton = NSButton(title: "Search", target: nil, action: nil)
     private let clearAPIKeyButton = NSButton(title: "Clear Key", target: nil, action: nil)
+    private let revealKeychainButton = NSButton(title: "Reveal Saved", target: nil, action: nil)
+    private let refreshKeychainButton = NSButton(title: "Refresh Saved", target: nil, action: nil)
     private let removeButton = NSButton(title: "Remove", target: nil, action: nil)
     private let addDemoButton = NSButton(title: "Add Demo Set", target: nil, action: nil)
     private let applyButton = NSButton(title: "Apply", target: nil, action: nil)
     private let statusLabel = NSTextField(labelWithString: "")
+    private let savedAppKeyLabel = NSTextField(labelWithString: "")
+    private let savedAppSecretLabel = NSTextField(labelWithString: "")
+    private var isShowingSavedCredentials = false
 
     init(preferences: StockerPreferences) {
         self.preferences = preferences
@@ -52,10 +75,17 @@ final class WatchlistWindowController: NSWindowController, NSTableViewDataSource
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int {
-        symbols.count
+        if tableView == sidebarTableView {
+            return sidebarSections.count
+        }
+        return symbols.count
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        if tableView == sidebarTableView {
+            return sidebarCell(for: row)
+        }
+
         let identifier = NSUserInterfaceItemIdentifier("SymbolCell")
         let cell = tableView.makeView(withIdentifier: identifier, owner: self) as? NSTableCellView
             ?? NSTableCellView()
@@ -75,7 +105,14 @@ final class WatchlistWindowController: NSWindowController, NSTableViewDataSource
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
-        removeButton.isEnabled = symbols.indices.contains(tableView.selectedRow)
+        guard let changedTableView = notification.object as? NSTableView else { return }
+        if changedTableView == sidebarTableView {
+            let selectedRow = sidebarTableView.selectedRow
+            guard sidebarSections.indices.contains(selectedRow) else { return }
+            selectSection(sidebarSections[selectedRow])
+        } else if changedTableView == tableView {
+            removeButton.isEnabled = symbols.indices.contains(tableView.selectedRow)
+        }
     }
 
     private func buildContent() {
@@ -83,18 +120,16 @@ final class WatchlistWindowController: NSWindowController, NSTableViewDataSource
 
         sidebarView.frame = NSRect(x: 0, y: 0, width: 150, height: 460)
         sidebarView.autoresizingMask = [.height]
-        sidebarView.wantsLayer = true
-        sidebarView.layer?.backgroundColor = NSColor.windowBackgroundColor
-            .blended(withFraction: 0.35, of: .controlBackgroundColor)?
-            .cgColor
+        sidebarView.material = .sidebar
+        sidebarView.blendingMode = .behindWindow
+        sidebarView.state = .active
 
         let appLabel = NSTextField(labelWithString: "ScreenStocker")
         appLabel.font = .boldSystemFont(ofSize: 14)
         appLabel.frame = NSRect(x: 18, y: 414, width: 116, height: 22)
         appLabel.autoresizingMask = [.minYMargin]
 
-        configureSidebarButton(watchlistButton, action: #selector(showWatchlistSection), y: 364)
-        configureSidebarButton(apiKeyButton, action: #selector(showAPIKeySection), y: 326)
+        configureSidebarTable()
 
         watchlistView.frame = NSRect(x: 174, y: 72, width: 482, height: 354)
         watchlistView.autoresizingMask = [.width, .height]
@@ -118,8 +153,7 @@ final class WatchlistWindowController: NSWindowController, NSTableViewDataSource
         applyButton.keyEquivalent = "\r"
 
         sidebarView.addSubview(appLabel)
-        sidebarView.addSubview(watchlistButton)
-        sidebarView.addSubview(apiKeyButton)
+        sidebarView.addSubview(sidebarTableView)
 
         contentView.addSubview(sidebarView)
         contentView.addSubview(watchlistView)
@@ -130,13 +164,46 @@ final class WatchlistWindowController: NSWindowController, NSTableViewDataSource
         selectSection(.watchlist)
     }
 
-    private func configureSidebarButton(_ button: NSButton, action: Selector, y: CGFloat) {
-        button.target = self
-        button.action = action
-        button.frame = NSRect(x: 12, y: y, width: 126, height: 32)
-        button.autoresizingMask = [.minYMargin]
-        button.bezelStyle = .rounded
-        button.setButtonType(.pushOnPushOff)
+    private func configureSidebarTable() {
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("SidebarColumn"))
+        column.width = 150
+        sidebarTableView.addTableColumn(column)
+        sidebarTableView.headerView = nil
+        sidebarTableView.dataSource = self
+        sidebarTableView.delegate = self
+        sidebarTableView.frame = NSRect(x: 0, y: 300, width: 150, height: 96)
+        sidebarTableView.autoresizingMask = [.width, .minYMargin]
+        sidebarTableView.rowHeight = 32
+        sidebarTableView.backgroundColor = .clear
+        sidebarTableView.style = .sourceList
+        sidebarTableView.intercellSpacing = NSSize(width: 0, height: 2)
+    }
+
+    private func sidebarCell(for row: Int) -> NSView? {
+        let identifier = NSUserInterfaceItemIdentifier("SidebarCell")
+        let cell = sidebarTableView.makeView(withIdentifier: identifier, owner: self) as? NSTableCellView
+            ?? NSTableCellView()
+        let section = sidebarSections[row]
+
+        let imageView = cell.imageView ?? NSImageView(frame: NSRect(x: 18, y: 7, width: 18, height: 18))
+        imageView.image = NSImage(systemSymbolName: section.symbolName, accessibilityDescription: section.title)
+        imageView.contentTintColor = .secondaryLabelColor
+
+        let textField = cell.textField ?? NSTextField(labelWithString: "")
+        textField.frame = NSRect(x: 44, y: 6, width: 88, height: 20)
+        textField.autoresizingMask = [.width]
+        textField.font = .systemFont(ofSize: 13)
+        textField.stringValue = section.title
+
+        if cell.textField == nil {
+            cell.identifier = identifier
+            cell.addSubview(imageView)
+            cell.addSubview(textField)
+            cell.imageView = imageView
+            cell.textField = textField
+        }
+
+        return cell
     }
 
     private func buildWatchlistSection() {
@@ -242,11 +309,29 @@ final class WatchlistWindowController: NSWindowController, NSTableViewDataSource
         clearAPIKeyButton.frame = NSRect(x: 372, y: 162, width: 110, height: 30)
         clearAPIKeyButton.autoresizingMask = [.minXMargin, .minYMargin]
 
+        let savedTitleLabel = NSTextField(labelWithString: "Saved in Keychain")
+        savedTitleLabel.font = .boldSystemFont(ofSize: 13)
+        savedTitleLabel.frame = NSRect(x: 0, y: 122, width: 160, height: 20)
+        savedTitleLabel.autoresizingMask = [.minYMargin]
+
+        configureSavedCredentialLabel(savedAppKeyLabel, y: 98)
+        configureSavedCredentialLabel(savedAppSecretLabel, y: 76)
+
+        refreshKeychainButton.target = self
+        refreshKeychainButton.action = #selector(refreshSavedCredentials)
+        refreshKeychainButton.frame = NSRect(x: 0, y: 38, width: 124, height: 30)
+        refreshKeychainButton.autoresizingMask = [.maxYMargin]
+
+        revealKeychainButton.target = self
+        revealKeychainButton.action = #selector(toggleSavedCredentialsVisibility)
+        revealKeychainButton.frame = NSRect(x: 136, y: 38, width: 124, height: 30)
+        revealKeychainButton.autoresizingMask = [.maxYMargin]
+
         let noteLabel = NSTextField(wrappingLabelWithString: "Credentials are stored in Keychain. Leave either field empty and apply to use demo data.")
         noteLabel.textColor = .secondaryLabelColor
         noteLabel.font = .systemFont(ofSize: 12)
-        noteLabel.frame = NSRect(x: 0, y: 104, width: 482, height: 40)
-        noteLabel.autoresizingMask = [.width, .minYMargin]
+        noteLabel.frame = NSRect(x: 0, y: 2, width: 482, height: 32)
+        noteLabel.autoresizingMask = [.width, .maxYMargin]
 
         apiKeyView.addSubview(titleLabel)
         apiKeyView.addSubview(hintLabel)
@@ -255,7 +340,21 @@ final class WatchlistWindowController: NSWindowController, NSTableViewDataSource
         apiKeyView.addSubview(appSecretLabel)
         apiKeyView.addSubview(appSecretField)
         apiKeyView.addSubview(clearAPIKeyButton)
+        apiKeyView.addSubview(savedTitleLabel)
+        apiKeyView.addSubview(savedAppKeyLabel)
+        apiKeyView.addSubview(savedAppSecretLabel)
+        apiKeyView.addSubview(refreshKeychainButton)
+        apiKeyView.addSubview(revealKeychainButton)
         apiKeyView.addSubview(noteLabel)
+        updateSavedCredentialPreview()
+    }
+
+    private func configureSavedCredentialLabel(_ label: NSTextField, y: CGFloat) {
+        label.textColor = .secondaryLabelColor
+        label.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        label.lineBreakMode = .byTruncatingMiddle
+        label.frame = NSRect(x: 0, y: y, width: 482, height: 18)
+        label.autoresizingMask = [.width, .maxYMargin]
     }
 
     @objc private func addSymbol() {
@@ -307,10 +406,21 @@ final class WatchlistWindowController: NSWindowController, NSTableViewDataSource
     }
 
     @objc private func applyChanges() {
-        preferences.koreaInvestmentAppKey = appKeyField.stringValue
-        preferences.koreaInvestmentAppSecret = appSecretField.stringValue
+        window?.makeFirstResponder(nil)
+
+        do {
+            try preferences.saveKoreaInvestmentCredentials(
+                appKey: appKeyField.stringValue,
+                appSecret: appSecretField.stringValue
+            )
+        } catch {
+            updateStatus(message: "Could not save KIS credentials: \(error.localizedDescription)")
+            return
+        }
+
         appKeyField.stringValue = preferences.koreaInvestmentAppKey
         appSecretField.stringValue = preferences.koreaInvestmentAppSecret
+        updateSavedCredentialPreview()
         saveWatchlist()
         do {
             try installer.reinstall()
@@ -326,20 +436,24 @@ final class WatchlistWindowController: NSWindowController, NSTableViewDataSource
         updateStatus(message: "KIS credentials cleared. Apply to switch to demo data.")
     }
 
-    @objc private func showWatchlistSection() {
-        selectSection(.watchlist)
+    @objc private func refreshSavedCredentials() {
+        updateSavedCredentialPreview()
+        updateStatus(message: preferences.koreaInvestmentCredentials.isConfigured ? "Loaded saved KIS credentials from Keychain." : "No complete KIS credentials are saved.")
     }
 
-    @objc private func showAPIKeySection() {
-        selectSection(.apiKey)
+    @objc private func toggleSavedCredentialsVisibility() {
+        isShowingSavedCredentials.toggle()
+        updateSavedCredentialPreview()
     }
 
     private func selectSection(_ section: Section) {
         selectedSection = section
         watchlistView.isHidden = section != .watchlist
         apiKeyView.isHidden = section != .apiKey
-        watchlistButton.state = section == .watchlist ? .on : .off
-        apiKeyButton.state = section == .apiKey ? .on : .off
+        if let index = sidebarSections.firstIndex(where: { $0 == section }),
+           sidebarTableView.selectedRow != index {
+            sidebarTableView.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+        }
         updateStatus()
     }
 
@@ -362,6 +476,7 @@ final class WatchlistWindowController: NSWindowController, NSTableViewDataSource
             case .watchlist:
                 statusLabel.stringValue = "\(symbols.count) symbol(s) ready."
             case .apiKey:
+                updateSavedCredentialPreview()
                 statusLabel.stringValue = preferences.koreaInvestmentCredentials.isConfigured ? "KIS credentials are saved." : "Demo data is active."
             }
         }
@@ -369,6 +484,23 @@ final class WatchlistWindowController: NSWindowController, NSTableViewDataSource
 
     private func updateStatus(message: String) {
         statusLabel.stringValue = message
+    }
+
+    private func updateSavedCredentialPreview() {
+        let credentials = preferences.koreaInvestmentCredentials
+        savedAppKeyLabel.stringValue = "App Key: \(displayCredential(credentials.appKey))"
+        savedAppSecretLabel.stringValue = "App Secret: \(displayCredential(credentials.appSecret))"
+        revealKeychainButton.title = isShowingSavedCredentials ? "Hide Saved" : "Reveal Saved"
+    }
+
+    private func displayCredential(_ credential: String) -> String {
+        guard !credential.isEmpty else { return "not saved" }
+        guard !isShowingSavedCredentials else { return credential }
+        guard credential.count > 10 else { return String(repeating: "*", count: credential.count) }
+
+        let prefix = credential.prefix(4)
+        let suffix = credential.suffix(4)
+        return "\(prefix)...\(suffix)"
     }
 
     private func saveWatchlist() {
