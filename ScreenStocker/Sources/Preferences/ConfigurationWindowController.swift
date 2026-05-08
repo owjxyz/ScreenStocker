@@ -1,22 +1,29 @@
 import AppKit
+import SwiftUI
 
 final class ConfigurationWindowController: NSWindowController {
     private let preferences: StockerPreferences
-    private let symbolPopup = NSPopUpButton()
-    private let emptyLabel = NSTextField(labelWithString: "No registered symbols. Open ScreenStocker to add symbols.")
+    private let viewModel: ScreenSaverConfigurationViewModel
 
     init(preferences: StockerPreferences) {
         self.preferences = preferences
+        self.viewModel = ScreenSaverConfigurationViewModel(preferences: preferences)
 
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 420, height: 150),
-            styleMask: [.titled],
-            backing: .buffered,
-            defer: false
+        let hostingController = NSHostingController(
+            rootView: ScreenSaverConfigurationView(viewModel: viewModel)
         )
+        let window = NSWindow(contentViewController: hostingController)
         window.title = "ScreenStocker Settings"
+        window.styleMask = [.titled]
+        window.setContentSize(NSSize(width: 420, height: 180))
+
         super.init(window: window)
-        buildContent()
+
+        viewModel.onDone = { [weak window] in
+            guard let window else { return }
+            window.sheetParent?.endSheet(window)
+        }
+
         DistributedNotificationCenter.default().addObserver(
             self,
             selector: #selector(preferencesDidChange),
@@ -33,59 +40,84 @@ final class ConfigurationWindowController: NSWindowController {
         DistributedNotificationCenter.default().removeObserver(self)
     }
 
-    private func buildContent() {
-        guard let contentView = window?.contentView else { return }
-
-        let label = NSTextField(labelWithString: "Display")
-        label.frame = NSRect(x: 24, y: 92, width: 120, height: 20)
-
-        symbolPopup.frame = NSRect(x: 24, y: 58, width: 372, height: 28)
-        reloadSymbols()
-
-        emptyLabel.frame = NSRect(x: 24, y: 36, width: 372, height: 18)
-        emptyLabel.textColor = .secondaryLabelColor
-        emptyLabel.font = .systemFont(ofSize: 11)
-        emptyLabel.isHidden = !preferences.registeredSymbols.isEmpty
-
-        let doneButton = NSButton(title: "Done", target: self, action: #selector(done))
-        doneButton.frame = NSRect(x: 316, y: 20, width: 80, height: 28)
-        doneButton.bezelStyle = .rounded
-
-        contentView.addSubview(label)
-        contentView.addSubview(symbolPopup)
-        contentView.addSubview(emptyLabel)
-        contentView.addSubview(doneButton)
-    }
-
     func reloadSymbols() {
-        symbolPopup.removeAllItems()
-        symbolPopup.addItem(withTitle: "First registered symbol")
-
-        for symbol in preferences.registeredSymbols {
-            symbolPopup.addItem(withTitle: symbol)
-        }
-
-        if let selectedSymbol = preferences.selectedSymbol {
-            symbolPopup.selectItem(withTitle: selectedSymbol)
-        } else {
-            symbolPopup.selectItem(at: 0)
-        }
-
-        emptyLabel.isHidden = !preferences.registeredSymbols.isEmpty
-    }
-
-    @objc private func done() {
-        if symbolPopup.indexOfSelectedItem <= 0 {
-            preferences.selectedSymbol = nil
-        } else {
-            preferences.selectedSymbol = symbolPopup.titleOfSelectedItem
-        }
-        window?.sheetParent?.endSheet(window!)
+        viewModel.reload()
     }
 
     @objc private func preferencesDidChange() {
         DispatchQueue.main.async { [weak self] in
             self?.reloadSymbols()
         }
+    }
+}
+
+@MainActor
+final class ScreenSaverConfigurationViewModel: ObservableObject {
+    @Published private(set) var symbols: [String] = []
+    @Published var selectedSymbol: String = ScreenSaverConfigurationViewModel.firstSymbolID
+    var onDone: (() -> Void)?
+
+    private static let firstSymbolID = "__first__"
+    private let preferences: StockerPreferences
+
+    init(preferences: StockerPreferences) {
+        self.preferences = preferences
+        reload()
+    }
+
+    var isWatchlistEmpty: Bool {
+        symbols.isEmpty
+    }
+
+    var firstSymbolID: String {
+        Self.firstSymbolID
+    }
+
+    func reload() {
+        symbols = preferences.registeredSymbols
+        selectedSymbol = preferences.selectedSymbol ?? Self.firstSymbolID
+    }
+
+    func saveAndClose() {
+        preferences.selectedSymbol = selectedSymbol == Self.firstSymbolID ? nil : selectedSymbol
+        onDone?()
+    }
+}
+
+private struct ScreenSaverConfigurationView: View {
+    @ObservedObject var viewModel: ScreenSaverConfigurationViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Display Symbol")
+                .font(.headline)
+
+            Picker("Display", selection: $viewModel.selectedSymbol) {
+                Text("First watchlist symbol").tag(viewModel.firstSymbolID)
+                ForEach(viewModel.symbols, id: \.self) { symbol in
+                    Text(symbol).tag(symbol)
+                }
+            }
+            .labelsHidden()
+            .disabled(viewModel.isWatchlistEmpty)
+
+            if viewModel.isWatchlistEmpty {
+                Text("No registered symbols. Open ScreenStocker to add symbols.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            HStack {
+                Spacer()
+                Button("Done") {
+                    viewModel.saveAndClose()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(24)
+        .frame(width: 420, height: 180)
     }
 }

@@ -4,10 +4,13 @@ import ScreenSaver
 @objc(ScreenStockerView)
 final class ScreenStockerView: ScreenSaverView {
     private let preferences = StockerPreferences()
-    private lazy var renderer = StockTickerRenderer(bounds: bounds)
+    private let renderer = StockTickerRenderer()
     private var configurationController: ConfigurationWindowController?
-    private var lastMarketDataRefreshDate: Date?
     private let marketDataRefreshInterval: TimeInterval = 5 * 60
+    private var refreshTimer: Timer?
+    private var isRefreshingMarketData = false
+    private var cachedQuote: StockQuote?
+    private var cachedSeries: StockChartSeries?
 
     override init?(frame: NSRect, isPreview: Bool) {
         super.init(frame: frame, isPreview: isPreview)
@@ -21,7 +24,7 @@ final class ScreenStockerView: ScreenSaverView {
 
     private func commonInit() {
         wantsLayer = true
-        animationTimeInterval = 1.0 / 30.0
+        animationTimeInterval = marketDataRefreshInterval
         layer?.backgroundColor = NSColor.black.cgColor
         renderer.attach(to: self)
         DistributedNotificationCenter.default().addObserver(
@@ -38,22 +41,20 @@ final class ScreenStockerView: ScreenSaverView {
 
     override func startAnimation() {
         super.startAnimation()
+        scheduleRefreshTimer()
         refreshMarketData()
     }
 
     override func stopAnimation() {
         super.stopAnimation()
+        refreshTimer?.invalidate()
+        refreshTimer = nil
+        isRefreshingMarketData = false
         renderer.stop()
     }
 
     override func animateOneFrame() {
-        refreshMarketDataIfNeeded()
-        renderer.tick()
-    }
-
-    override func layout() {
-        super.layout()
-        renderer.resize(to: bounds)
+        refreshMarketData()
     }
 
     override var hasConfigureSheet: Bool {
@@ -69,8 +70,15 @@ final class ScreenStockerView: ScreenSaverView {
     }
 
     private func refreshMarketData() {
-        lastMarketDataRefreshDate = Date()
-        let symbol = preferences.primarySymbol
+        guard !isRefreshingMarketData else { return }
+        guard let symbol = preferences.symbolForScreenSaverDisplay else {
+            renderer.showEmptyWatchlist()
+            return
+        }
+
+        isRefreshingMarketData = true
+        renderer.showLoading(symbol: symbol)
+
         let quoteProvider: StockQuoteProvider
         let timeSeriesProvider: StockTimeSeriesProvider
 
@@ -110,38 +118,40 @@ final class ScreenStockerView: ScreenSaverView {
 
         group.notify(queue: .main) { [weak self] in
             guard let self else { return }
+            self.isRefreshingMarketData = false
             if let quote, let series {
+                self.cachedQuote = quote
+                self.cachedSeries = series
                 self.renderer.render(quote: quote, series: series)
             } else if self.preferences.koreaInvestmentCredentials.isConfigured {
-                self.renderDemoMarketData(for: symbol)
+                self.renderer.showError(
+                    message: "Live data failed. Showing the last successful quote when available.",
+                    cachedQuote: self.cachedQuote,
+                    cachedSeries: self.cachedSeries
+                )
+            } else if let quote {
+                self.cachedQuote = quote
+                self.cachedSeries = series
+                self.renderer.render(quote: quote, series: series)
+            } else {
+                self.renderer.showError(
+                    message: "Demo market data is unavailable.",
+                    cachedQuote: self.cachedQuote,
+                    cachedSeries: self.cachedSeries
+                )
             }
         }
     }
 
-    private func renderDemoMarketData(for symbol: String) {
-        DemoStockQuoteProvider(symbols: [symbol]).fetchQuotes { [weak self] quotes in
-            guard let quote = quotes.first else { return }
-            DemoStockTimeSeriesProvider(symbol: symbol).fetchTimeSeries { series in
-                DispatchQueue.main.async {
-                    self?.renderer.render(quote: quote, series: series)
-                }
-            }
-        }
-    }
-
-    private func refreshMarketDataIfNeeded() {
-        guard let lastMarketDataRefreshDate else {
-            refreshMarketData()
-            return
-        }
-        if Date().timeIntervalSince(lastMarketDataRefreshDate) >= marketDataRefreshInterval {
-            refreshMarketData()
+    private func scheduleRefreshTimer() {
+        refreshTimer?.invalidate()
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: marketDataRefreshInterval, repeats: true) { [weak self] _ in
+            self?.refreshMarketData()
         }
     }
 
     @objc private func preferencesDidChange() {
         DispatchQueue.main.async { [weak self] in
-            self?.lastMarketDataRefreshDate = nil
             self?.refreshMarketData()
         }
     }

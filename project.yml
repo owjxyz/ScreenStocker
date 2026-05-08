@@ -23,8 +23,8 @@ targets:
       - sdk: AppKit.framework
       - sdk: Charts.framework
       - sdk: ScreenSaver.framework
-      - sdk: QuartzCore.framework
       - sdk: Security.framework
+      - sdk: SwiftUI.framework
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.lukeoh.ScreenStocker
@@ -47,11 +47,13 @@ targets:
       - sdk: AppKit.framework
       - sdk: ScreenSaver.framework
       - sdk: Security.framework
+      - sdk: SwiftUI.framework
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.lukeoh.ScreenStockerApp
         PRODUCT_NAME: ScreenStocker
         INFOPLIST_FILE: ScreenStockerApp/Resources/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_DEBUG_DYLIB: "NO"
 
   ScreenStockerTests:

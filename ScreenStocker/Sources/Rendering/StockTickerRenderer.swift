@@ -1,193 +1,228 @@
 import AppKit
 import Charts
-import QuartzCore
 import SwiftUI
 
+@MainActor
 final class StockTickerRenderer {
-    private let rootLayer = CALayer()
-    private let symbolLayer = CATextLayer()
-    private let priceLayer = CATextLayer()
-    private let changeLayer = CATextLayer()
-    private let highLayer = CATextLayer()
-    private let lowLayer = CATextLayer()
-    private let endpointLayer = CAShapeLayer()
-    private var chartHostingView: NSHostingView<StockTickerChartView>?
-    private var quote: StockQuote?
-    private var series: StockChartSeries?
-    private var bounds: CGRect
-    private var phase: CGFloat = 0
-
-    init(bounds: CGRect) {
-        self.bounds = bounds
-        rootLayer.masksToBounds = true
-        rootLayer.backgroundColor = NSColor.black.cgColor
-
-        configureTextLayer(symbolLayer, fontSize: 34, weight: .semibold, color: .white)
-        configureTextLayer(priceLayer, fontSize: 72, weight: .bold, color: .white)
-        configureTextLayer(changeLayer, fontSize: 30, weight: .medium, color: .secondaryLabelColor)
-        configureTextLayer(highLayer, fontSize: 22, weight: .semibold, color: .systemRed)
-        configureTextLayer(lowLayer, fontSize: 22, weight: .semibold, color: .systemRed)
-
-        endpointLayer.fillColor = NSColor.systemRed.cgColor
-        endpointLayer.strokeColor = NSColor.clear.cgColor
-        endpointLayer.shadowColor = NSColor.white.cgColor
-        endpointLayer.shadowOffset = .zero
-        endpointLayer.shadowRadius = 18
-        endpointLayer.shadowOpacity = 0.85
-
-        [endpointLayer, symbolLayer, priceLayer, changeLayer, highLayer, lowLayer]
-            .forEach(rootLayer.addSublayer)
-    }
+    private let viewModel = StockTickerViewModel()
+    private var hostingView: NSHostingView<StockTickerScreenView>?
 
     func attach(to view: NSView) {
-        view.layer?.addSublayer(rootLayer)
-        let hostingView = NSHostingView(rootView: StockTickerChartView(configuration: nil))
+        let hostingView = NSHostingView(rootView: StockTickerScreenView(viewModel: viewModel))
+        hostingView.translatesAutoresizingMaskIntoConstraints = false
         hostingView.wantsLayer = true
-        hostingView.layer?.backgroundColor = NSColor.clear.cgColor
-        hostingView.translatesAutoresizingMaskIntoConstraints = true
-        hostingView.autoresizingMask = []
-        hostingView.isHidden = true
+        hostingView.layer?.backgroundColor = NSColor.black.cgColor
         view.addSubview(hostingView)
-        chartHostingView = hostingView
-        resize(to: view.bounds)
+
+        NSLayoutConstraint.activate([
+            hostingView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            hostingView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            hostingView.topAnchor.constraint(equalTo: view.topAnchor),
+            hostingView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
+
+        self.hostingView = hostingView
     }
 
-    func resize(to newBounds: CGRect) {
-        bounds = newBounds
-        rootLayer.frame = newBounds
-        layoutLayers()
+    func showLoading(symbol: String) {
+        viewModel.state = .loading(symbol: symbol)
+    }
+
+    func showEmptyWatchlist() {
+        viewModel.state = .emptyWatchlist
     }
 
     func render(quote: StockQuote, series: StockChartSeries?) {
-        self.quote = quote
-        self.series = series
-        layoutLayers()
+        viewModel.state = .loaded(quote: quote, series: series)
     }
 
-    func tick() {
-        phase += 0.05
-        let pulse = (sin(phase * 2.8) + 1) / 2
-        let scale = 0.92 + pulse * 0.32
-        endpointLayer.transform = CATransform3DMakeScale(scale, scale, 1)
-        endpointLayer.opacity = Float(0.38 + pulse * 0.62)
-        endpointLayer.shadowOpacity = Float(0.22 + pulse * 0.78)
-        endpointLayer.shadowRadius = 12 + pulse * 18
-    }
-
-    func stop() {
-        rootLayer.removeAllAnimations()
-    }
-
-    private func layoutLayers() {
-        guard let quote else {
-            clearChart()
-            return
+    func showError(message: String, cachedQuote: StockQuote?, cachedSeries: StockChartSeries?) {
+        if let cachedQuote {
+            viewModel.state = .stale(quote: cachedQuote, series: cachedSeries, message: message)
+        } else {
+            viewModel.state = .error(message: message)
         }
-
-        let lineColor = quote.changePercent >= 0 ? NSColor.systemRed : NSColor.systemBlue
-        let sideInset = max(bounds.width * 0.07, 42)
-        let topInset = max(bounds.height * 0.08, 36)
-        let priceHeight = max(bounds.height * 0.12, 82)
-        let chartTop = topInset + 150
-        let chartBottomInset = max(bounds.height * 0.11, 72)
-        let chartFrame = CGRect(
-            x: sideInset,
-            y: chartBottomInset,
-            width: max(bounds.width - sideInset * 2, 10),
-            height: max(bounds.height - chartTop - chartBottomInset, 10)
-        )
-
-        symbolLayer.string = quote.symbol
-        symbolLayer.frame = CGRect(x: sideInset, y: bounds.height - topInset - 44, width: bounds.width - sideInset * 2, height: 44)
-
-        priceLayer.string = quote.priceText
-        priceLayer.frame = CGRect(x: sideInset, y: bounds.height - topInset - 44 - priceHeight, width: bounds.width - sideInset * 2, height: priceHeight)
-
-        let sign = quote.changePercent >= 0 ? "+" : ""
-        changeLayer.string = "\(sign)\(quote.changePercentText)"
-        changeLayer.foregroundColor = lineColor.cgColor
-        changeLayer.frame = CGRect(x: sideInset, y: bounds.height - topInset - 44 - priceHeight - 42, width: bounds.width - sideInset * 2, height: 38)
-
-        let chartLineWidth = max(min(bounds.width, bounds.height) * 0.006, 4)
-        endpointLayer.fillColor = lineColor.withAlphaComponent(0.92).cgColor
-        highLayer.foregroundColor = lineColor.cgColor
-        lowLayer.foregroundColor = lineColor.cgColor
-
-        guard let series, series.points.count >= 2 else {
-            clearChart()
-            return
-        }
-
-        drawChart(series: series, in: chartFrame, color: lineColor, lineWidth: chartLineWidth)
     }
 
-    private func drawChart(series: StockChartSeries, in chartFrame: CGRect, color: NSColor, lineWidth: CGFloat) {
-        let chartPoints = intradayChartPoints(from: series) ?? indexedChartPoints(from: series)
-        let closes = chartPoints.map(\.point.close)
-        guard let minClose = closes.min(),
-              let maxClose = closes.max(),
-              let firstClose = closes.first else {
-            clearChart()
-            return
-        }
+    func stop() {}
+}
 
-        let minValue = decimalNumber(minClose).doubleValue
-        let maxValue = decimalNumber(maxClose).doubleValue
+@MainActor
+private final class StockTickerViewModel: ObservableObject {
+    @Published var state: StockTickerState = .emptyWatchlist
+}
+
+private enum StockTickerState {
+    case emptyWatchlist
+    case loading(symbol: String)
+    case loaded(quote: StockQuote, series: StockChartSeries?)
+    case stale(quote: StockQuote, series: StockChartSeries?, message: String)
+    case error(message: String)
+}
+
+private struct StockTickerScreenView: View {
+    @ObservedObject var viewModel: StockTickerViewModel
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+
+            switch viewModel.state {
+            case .emptyWatchlist:
+                MessageView(
+                    title: "No Watchlist Symbols",
+                    detail: "Open ScreenStocker to add symbols, then choose one in Screen Saver Settings."
+                )
+            case .loading(let symbol):
+                MessageView(title: symbol, detail: "Loading market data...")
+            case .loaded(let quote, let series):
+                QuoteDashboardView(quote: quote, series: series, status: nil)
+            case .stale(let quote, let series, let message):
+                QuoteDashboardView(quote: quote, series: series, status: message)
+            case .error(let message):
+                MessageView(title: "Market Data Unavailable", detail: message)
+            }
+        }
+    }
+}
+
+private struct QuoteDashboardView: View {
+    let quote: StockQuote
+    let series: StockChartSeries?
+    let status: String?
+
+    private var isPositive: Bool {
+        quote.changePercent >= 0
+    }
+
+    private var lineColor: Color {
+        isPositive ? .red : .blue
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let sideInset = max(proxy.size.width * 0.07, 42)
+            let verticalInset = max(proxy.size.height * 0.08, 36)
+
+            VStack(alignment: .leading, spacing: 12) {
+                header
+
+                if let series, series.points.count >= 2 {
+                    StockLineChart(series: series, lineColor: lineColor)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .padding(.top, 28)
+                } else {
+                    MessageView(title: "No Chart Data", detail: "Latest quote is available.")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+
+                if let status {
+                    Text(status)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+            .padding(.horizontal, sideInset)
+            .padding(.vertical, verticalInset)
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(quote.symbol)
+                .font(.system(size: 34, weight: .semibold, design: .default))
+                .foregroundStyle(.white)
+
+            Text(quote.priceText)
+                .font(.system(size: 72, weight: .bold, design: .default))
+                .foregroundStyle(.white)
+                .minimumScaleFactor(0.55)
+                .lineLimit(1)
+
+            Text("\(isPositive ? "+" : "")\(quote.changePercentText)")
+                .font(.system(size: 30, weight: .medium, design: .default))
+                .foregroundStyle(lineColor)
+        }
+    }
+}
+
+private struct StockLineChart: View {
+    let series: StockChartSeries
+    let lineColor: Color
+
+    private var samples: [StockChartSample] {
+        let points = normalizedPoints()
+        return points.map { point in
+            StockChartSample(
+                xRatio: point.xRatio,
+                close: decimalNumber(point.point.close).doubleValue,
+                point: point.point
+            )
+        }
+    }
+
+    private var closeValues: [Double] {
+        samples.map(\.close)
+    }
+
+    var body: some View {
+        let values = closeValues
+        let minValue = values.min() ?? 0
+        let maxValue = values.max() ?? 1
+        let firstValue = values.first ?? minValue
         let valueRange = max(maxValue - minValue, 1)
+        let yDomain = minValue...(minValue + valueRange)
 
-        var latestPoint = CGPoint.zero
-        var highPoint = CGPoint.zero
-        var lowPoint = CGPoint.zero
-        let chartSamples = chartPoints.map { chartPoint in
-            StockTickerChartSample(
-                xRatio: Double(chartPoint.xRatio),
-                close: decimalNumber(chartPoint.point.close).doubleValue
-            )
-        }
+        Chart {
+            RuleMark(y: .value("Open", firstValue))
+                .foregroundStyle(.white.opacity(0.24))
+                .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [8, 9]))
 
-        for chartPoint in chartPoints {
-            let point = chartPoint.point
-            let value = decimalNumber(point.close).doubleValue
-            let x = chartFrame.minX + chartPoint.xRatio * chartFrame.width
-            let yRatio = CGFloat((value - minValue) / valueRange)
-            let y = chartFrame.minY + yRatio * chartFrame.height
-            let cgPoint = CGPoint(x: x, y: y)
-
-            if point.close == maxClose {
-                highPoint = cgPoint
+            ForEach(samples) { sample in
+                LineMark(
+                    x: .value("Session", sample.xRatio),
+                    y: .value("Close", sample.close)
+                )
+                .interpolationMethod(.linear)
+                .foregroundStyle(lineColor)
+                .lineStyle(StrokeStyle(lineWidth: 5, lineCap: .round, lineJoin: .round))
             }
-            if point.close == minClose {
-                lowPoint = cgPoint
+
+            if let latest = samples.last {
+                PointMark(
+                    x: .value("Session", latest.xRatio),
+                    y: .value("Close", latest.close)
+                )
+                .foregroundStyle(lineColor)
+                .symbolSize(180)
             }
-            latestPoint = cgPoint
         }
-
-        chartHostingView?.frame = chartFrame
-        chartHostingView?.isHidden = false
-        chartHostingView?.rootView = StockTickerChartView(
-            configuration: StockTickerChartConfiguration(
-                samples: chartSamples,
-                baseline: decimalNumber(firstClose).doubleValue,
-                minValue: minValue,
-                maxValue: minValue + valueRange,
-                lineColor: Color(nsColor: color),
-                lineWidth: lineWidth
-            )
-        )
-
-        let dotRadius = max(min(bounds.width, bounds.height) * 0.011, 9)
-        endpointLayer.bounds = CGRect(x: 0, y: 0, width: dotRadius * 2, height: dotRadius * 2)
-        endpointLayer.position = latestPoint
-        endpointLayer.path = CGPath(ellipseIn: endpointLayer.bounds, transform: nil)
-        endpointLayer.shadowPath = endpointLayer.path
-
-        highLayer.string = "High \(StockQuote.currencyText(for: maxClose))"
-        lowLayer.string = "Low \(StockQuote.currencyText(for: minClose))"
-        highLayer.frame = labelFrame(anchoredAt: highPoint, in: chartFrame, preferAbove: true)
-        lowLayer.frame = labelFrame(anchoredAt: lowPoint, in: chartFrame, preferAbove: false)
+        .chartXScale(domain: 0...1)
+        .chartYScale(domain: yDomain)
+        .chartXAxis(.hidden)
+        .chartYAxis(.hidden)
+        .chartPlotStyle { plotArea in
+            plotArea.background(.clear)
+        }
+        .overlay(alignment: .topTrailing) {
+            ValueBadge(title: "High", value: StockQuote.currencyText(for: series.highClose ?? 0))
+                .foregroundStyle(lineColor)
+        }
+        .overlay(alignment: .bottomTrailing) {
+            ValueBadge(title: "Low", value: StockQuote.currencyText(for: series.lowClose ?? 0))
+                .foregroundStyle(lineColor)
+        }
     }
 
-    private func intradayChartPoints(from series: StockChartSeries) -> [ChartPoint]? {
+    private func normalizedPoints() -> [ChartPoint] {
+        guard let intradayPoints = intradayChartPoints(), intradayPoints.count >= 2 else {
+            return indexedChartPoints()
+        }
+        return intradayPoints
+    }
+
+    private func intradayChartPoints() -> [ChartPoint]? {
         guard let latestDate = series.points.last?.date else { return nil }
         let calendar = Self.marketCalendar
         let session = marketSession(containing: latestDate, calendar: calendar)
@@ -198,18 +233,17 @@ final class StockTickerRenderer {
             guard point.date >= session.start, point.date <= session.end else {
                 return nil
             }
-            let xRatio = CGFloat(point.date.timeIntervalSince(session.start) / sessionDuration)
+            let xRatio = point.date.timeIntervalSince(session.start) / sessionDuration
             return ChartPoint(point: point, xRatio: min(max(xRatio, 0), 1))
         }
 
-        guard points.count >= 2 else { return nil }
-        return points
+        return points.count >= 2 ? points : nil
     }
 
-    private func indexedChartPoints(from series: StockChartSeries) -> [ChartPoint] {
+    private func indexedChartPoints() -> [ChartPoint] {
         series.points.enumerated().map { index, point in
-            let denominator = CGFloat(max(series.points.count - 1, 1))
-            return ChartPoint(point: point, xRatio: CGFloat(index) / denominator)
+            let denominator = Double(max(series.points.count - 1, 1))
+            return ChartPoint(point: point, xRatio: Double(index) / denominator)
         }
     }
 
@@ -230,36 +264,6 @@ final class StockTickerRenderer {
         return (start, end)
     }
 
-    private func labelFrame(anchoredAt point: CGPoint, in chartFrame: CGRect, preferAbove: Bool) -> CGRect {
-        let size = CGSize(width: min(max(bounds.width * 0.24, 150), 260), height: 30)
-        let x = min(max(point.x - size.width / 2, chartFrame.minX), chartFrame.maxX - size.width)
-        let candidateY = preferAbove ? point.y + 18 : point.y - size.height - 18
-        let y = min(max(candidateY, chartFrame.minY), chartFrame.maxY - size.height)
-        return CGRect(origin: CGPoint(x: x, y: y), size: size)
-    }
-
-    private func clearChart() {
-        chartHostingView?.isHidden = true
-        chartHostingView?.rootView = StockTickerChartView(configuration: nil)
-        endpointLayer.path = nil
-        highLayer.string = nil
-        lowLayer.string = nil
-    }
-
-    private func configureTextLayer(
-        _ layer: CATextLayer,
-        fontSize: CGFloat,
-        weight: NSFont.Weight,
-        color: NSColor
-    ) {
-        layer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2
-        layer.foregroundColor = color.cgColor
-        layer.font = NSFont.systemFont(ofSize: fontSize, weight: weight)
-        layer.fontSize = fontSize
-        layer.alignmentMode = .left
-        layer.truncationMode = .end
-    }
-
     private func decimalNumber(_ decimal: Decimal) -> NSDecimalNumber {
         decimal as NSDecimalNumber
     }
@@ -272,55 +276,51 @@ final class StockTickerRenderer {
 
     private struct ChartPoint {
         let point: StockTimeSeriesPoint
-        let xRatio: CGFloat
+        let xRatio: Double
     }
 }
 
-private struct StockTickerChartSample: Identifiable, Equatable {
+private struct StockChartSample: Identifiable {
     let id = UUID()
     let xRatio: Double
     let close: Double
+    let point: StockTimeSeriesPoint
 }
 
-private struct StockTickerChartConfiguration: Equatable {
-    let samples: [StockTickerChartSample]
-    let baseline: Double
-    let minValue: Double
-    let maxValue: Double
-    let lineColor: Color
-    let lineWidth: CGFloat
-}
-
-private struct StockTickerChartView: View {
-    let configuration: StockTickerChartConfiguration?
+private struct ValueBadge: View {
+    let title: String
+    let value: String
 
     var body: some View {
-        if let configuration {
-            Chart {
-                RuleMark(y: .value("Open", configuration.baseline))
-                    .foregroundStyle(.white.opacity(0.24))
-                    .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [8, 9]))
-
-                ForEach(configuration.samples) { sample in
-                    LineMark(
-                        x: .value("Session", sample.xRatio),
-                        y: .value("Close", sample.close)
-                    )
-                    .interpolationMethod(.linear)
-                    .foregroundStyle(configuration.lineColor)
-                    .lineStyle(StrokeStyle(lineWidth: configuration.lineWidth, lineCap: .round, lineJoin: .round))
-                }
-            }
-            .chartXScale(domain: 0...1)
-            .chartYScale(domain: configuration.minValue...configuration.maxValue)
-            .chartXAxis(.hidden)
-            .chartYAxis(.hidden)
-            .chartPlotStyle { plotArea in
-                plotArea.background(.clear)
-            }
-            .background(.clear)
-        } else {
-            Color.clear
+        HStack(spacing: 6) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+            Text(value)
+                .font(.caption.monospacedDigit())
         }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(.black.opacity(0.48), in: Capsule())
+    }
+}
+
+private struct MessageView: View {
+    let title: String
+    let detail: String
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Text(title)
+                .font(.title.weight(.semibold))
+                .foregroundStyle(.white)
+                .multilineTextAlignment(.center)
+
+            Text(detail)
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .lineLimit(3)
+        }
+        .padding(32)
     }
 }

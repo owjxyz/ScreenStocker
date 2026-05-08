@@ -42,8 +42,11 @@ final class StockerPreferences {
         }
     }
 
-    var primarySymbol: String {
-        symbols.first ?? Self.fallbackSymbol
+    var symbolForScreenSaverDisplay: String? {
+        if let selectedSymbol {
+            return selectedSymbol
+        }
+        return registeredSymbols.first
     }
 
     var registeredSymbols: [String] {
