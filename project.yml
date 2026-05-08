@@ -34,7 +34,7 @@ targets:
   ScreenStockerApp:
     type: application
     platform: macOS
-    productName: ScreenStocker Manager
+    productName: ScreenStocker
     sources:
       - path: ScreenStockerApp/Sources
       - path: ScreenStockerApp/Resources
@@ -46,7 +46,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.lukeoh.ScreenStockerApp
-        PRODUCT_NAME: ScreenStocker Manager
+        PRODUCT_NAME: ScreenStocker
         INFOPLIST_FILE: ScreenStockerApp/Resources/Info.plist
 
   ScreenStockerTests:
@@ -54,5 +54,7 @@ targets:
     platform: macOS
     sources:
       - path: Tests/ScreenStockerTests
-    dependencies:
-      - target: ScreenStocker
+      - path: ScreenStocker/Sources/Stocks
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: "YES"

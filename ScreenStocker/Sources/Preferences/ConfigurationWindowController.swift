@@ -3,7 +3,7 @@ import AppKit
 final class ConfigurationWindowController: NSWindowController {
     private let preferences: StockerPreferences
     private let symbolPopup = NSPopUpButton()
-    private let emptyLabel = NSTextField(labelWithString: "No registered symbols. Open ScreenStocker Manager to add symbols.")
+    private let emptyLabel = NSTextField(labelWithString: "No registered symbols. Open ScreenStocker to add symbols.")
 
     init(preferences: StockerPreferences) {
         self.preferences = preferences
@@ -17,10 +17,20 @@ final class ConfigurationWindowController: NSWindowController {
         window.title = "ScreenStocker Settings"
         super.init(window: window)
         buildContent()
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(preferencesDidChange),
+            name: StockerPreferences.didChangeNotification,
+            object: nil
+        )
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        DistributedNotificationCenter.default().removeObserver(self)
     }
 
     private func buildContent() {
@@ -49,7 +59,7 @@ final class ConfigurationWindowController: NSWindowController {
 
     func reloadSymbols() {
         symbolPopup.removeAllItems()
-        symbolPopup.addItem(withTitle: "All registered symbols")
+        symbolPopup.addItem(withTitle: "First registered symbol")
 
         for symbol in preferences.registeredSymbols {
             symbolPopup.addItem(withTitle: symbol)
@@ -71,5 +81,11 @@ final class ConfigurationWindowController: NSWindowController {
             preferences.selectedSymbol = symbolPopup.titleOfSelectedItem
         }
         window?.sheetParent?.endSheet(window!)
+    }
+
+    @objc private func preferencesDidChange() {
+        DispatchQueue.main.async { [weak self] in
+            self?.reloadSymbols()
+        }
     }
 }

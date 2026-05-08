@@ -6,6 +6,8 @@ final class ScreenStockerView: ScreenSaverView {
     private let preferences = StockerPreferences()
     private lazy var renderer = StockTickerRenderer(bounds: bounds)
     private var configurationController: ConfigurationWindowController?
+    private var lastMarketDataRefreshDate: Date?
+    private let marketDataRefreshInterval: TimeInterval = 5 * 60
 
     override init?(frame: NSRect, isPreview: Bool) {
         super.init(frame: frame, isPreview: isPreview)
@@ -26,7 +28,7 @@ final class ScreenStockerView: ScreenSaverView {
 
     override func startAnimation() {
         super.startAnimation()
-        refreshQuotes()
+        refreshMarketData()
     }
 
     override func stopAnimation() {
@@ -35,6 +37,7 @@ final class ScreenStockerView: ScreenSaverView {
     }
 
     override func animateOneFrame() {
+        refreshMarketDataIfNeeded()
         renderer.tick()
     }
 
@@ -55,12 +58,64 @@ final class ScreenStockerView: ScreenSaverView {
         return configurationController?.window
     }
 
-    private func refreshQuotes() {
-        let provider = DemoStockQuoteProvider(symbols: preferences.symbols)
-        provider.fetchQuotes { [weak self] quotes in
-            DispatchQueue.main.async {
-                self?.renderer.render(quotes: quotes)
+    private func refreshMarketData() {
+        lastMarketDataRefreshDate = Date()
+        let symbol = preferences.primarySymbol
+        let quoteProvider: StockQuoteProvider
+        let timeSeriesProvider: StockTimeSeriesProvider
+
+        if preferences.twelveDataAPIKey.isEmpty {
+            quoteProvider = DemoStockQuoteProvider(symbols: [symbol])
+            timeSeriesProvider = DemoStockTimeSeriesProvider(symbol: symbol)
+        } else {
+            quoteProvider = TwelveDataQuoteProvider(symbols: [symbol], apiKey: preferences.twelveDataAPIKey)
+            timeSeriesProvider = TwelveDataTimeSeriesProvider(symbol: symbol, apiKey: preferences.twelveDataAPIKey)
+        }
+
+        let group = DispatchGroup()
+        var quote: StockQuote?
+        var series: StockChartSeries?
+
+        group.enter()
+        quoteProvider.fetchQuotes { quotes in
+            quote = quotes.first
+            group.leave()
+        }
+
+        group.enter()
+        timeSeriesProvider.fetchTimeSeries { fetchedSeries in
+            series = fetchedSeries
+            group.leave()
+        }
+
+        group.notify(queue: .main) { [weak self] in
+            guard let self else { return }
+            if let quote, let series {
+                self.renderer.render(quote: quote, series: series)
+            } else if !self.preferences.twelveDataAPIKey.isEmpty {
+                self.renderDemoMarketData(for: symbol)
             }
+        }
+    }
+
+    private func renderDemoMarketData(for symbol: String) {
+        DemoStockQuoteProvider(symbols: [symbol]).fetchQuotes { [weak self] quotes in
+            guard let quote = quotes.first else { return }
+            DemoStockTimeSeriesProvider(symbol: symbol).fetchTimeSeries { series in
+                DispatchQueue.main.async {
+                    self?.renderer.render(quote: quote, series: series)
+                }
+            }
+        }
+    }
+
+    private func refreshMarketDataIfNeeded() {
+        guard let lastMarketDataRefreshDate else {
+            refreshMarketData()
+            return
+        }
+        if Date().timeIntervalSince(lastMarketDataRefreshDate) >= marketDataRefreshInterval {
+            refreshMarketData()
         }
     }
 }
