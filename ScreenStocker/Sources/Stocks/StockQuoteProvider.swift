@@ -12,6 +12,20 @@ protocol StockTimeSeriesProvider {
     func fetchTimeSeries(completion: @escaping (StockChartSeries?) -> Void)
 }
 
+struct KoreaInvestmentCredentials: Equatable {
+    let appKey: String
+    let appSecret: String
+
+    init(appKey: String, appSecret: String) {
+        self.appKey = appKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.appSecret = appSecret.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var isConfigured: Bool {
+        !appKey.isEmpty && !appSecret.isEmpty
+    }
+}
+
 final class DemoStockQuoteProvider: StockQuoteProvider {
     private let symbols: [String]
 
@@ -82,119 +96,188 @@ final class DemoStockTimeSeriesProvider: StockTimeSeriesProvider {
     }
 }
 
-final class TwelveDataQuoteProvider: StockQuoteProvider {
+final class KoreaInvestmentQuoteProvider: StockQuoteProvider {
     private let symbols: [String]
-    private let apiKey: String
+    private let credentials: KoreaInvestmentCredentials
     private let session: URLSession
     private let baseURL: URL
+    private let tokenProvider: KoreaInvestmentAccessTokenProviding
 
     init(
         symbols: [String],
-        apiKey: String,
+        credentials: KoreaInvestmentCredentials,
         session: URLSession = .shared,
-        baseURL: URL = URL(string: "https://api.twelvedata.com")!
+        baseURL: URL = KoreaInvestmentAPI.productionBaseURL,
+        tokenProvider: KoreaInvestmentAccessTokenProviding? = nil
     ) {
         self.symbols = symbols
-        self.apiKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.credentials = credentials
         self.session = session
         self.baseURL = baseURL
+        self.tokenProvider = tokenProvider ?? KoreaInvestmentAccessTokenProvider(
+            credentials: credentials,
+            session: session,
+            baseURL: baseURL
+        )
     }
 
     func fetchQuotes(completion: @escaping ([StockQuote]) -> Void) {
-        guard !symbols.isEmpty, !apiKey.isEmpty, let url = makeQuoteURL() else {
+        guard !symbols.isEmpty, credentials.isConfigured else {
             completion([])
             return
         }
 
-        session.dataTask(with: url) { data, _, error in
-            guard error == nil, let data else {
+        tokenProvider.fetchAccessToken { [weak self] token in
+            guard let self, let token else {
                 completion([])
                 return
             }
-            completion(Self.decodeQuotes(from: data, requestedSymbols: self.symbols))
-        }.resume()
-    }
 
-    private func makeQuoteURL() -> URL? {
-        var components = URLComponents(url: baseURL.appendingPathComponent("quote"), resolvingAgainstBaseURL: false)
-        components?.queryItems = [
-            URLQueryItem(name: "symbol", value: symbols.joined(separator: ",")),
-            URLQueryItem(name: "apikey", value: apiKey)
-        ]
-        return components?.url
-    }
+            let group = DispatchGroup()
+            let lock = NSLock()
+            var quotes: [StockQuote] = []
 
-    static func decodeQuotes(from data: Data, requestedSymbols: [String]) -> [StockQuote] {
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return []
-        }
-
-        if let stockQuote = TwelveDataQuote(json: json)?.stockQuote {
-            return [stockQuote]
-        }
-
-        let order = Dictionary(uniqueKeysWithValues: requestedSymbols.enumerated().map { ($0.element, $0.offset) })
-        return json.values
-            .compactMap { $0 as? [String: Any] }
-            .compactMap { TwelveDataQuote(json: $0)?.stockQuote }
-            .sorted { lhs, rhs in
-                (order[lhs.symbol] ?? Int.max) < (order[rhs.symbol] ?? Int.max)
+            for symbol in self.symbols {
+                guard let request = self.makeQuoteRequest(symbol: symbol, accessToken: token) else {
+                    continue
+                }
+                group.enter()
+                self.session.dataTask(with: request) { data, _, error in
+                    defer { group.leave() }
+                    guard error == nil, let data,
+                          let quote = Self.decodeQuote(from: data, requestedSymbol: symbol) else {
+                        return
+                    }
+                    lock.lock()
+                    quotes.append(quote)
+                    lock.unlock()
+                }.resume()
             }
+
+            group.notify(queue: .global()) {
+                let order = Dictionary(uniqueKeysWithValues: self.symbols.enumerated().map { ($0.element, $0.offset) })
+                completion(quotes.sorted {
+                    (order[$0.symbol] ?? Int.max) < (order[$1.symbol] ?? Int.max)
+                })
+            }
+        }
+    }
+
+    private func makeQuoteRequest(symbol: String, accessToken: String) -> URLRequest? {
+        let url = baseURL.appendingPathComponent("uapi/domestic-stock/v1/quotations/inquire-price")
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        components?.queryItems = [
+            URLQueryItem(name: "FID_COND_MRKT_DIV_CODE", value: "J"),
+            URLQueryItem(name: "FID_INPUT_ISCD", value: symbol)
+        ]
+        guard let requestURL = components?.url else { return nil }
+
+        var request = URLRequest(url: requestURL)
+        request.httpMethod = "GET"
+        request.allHTTPHeaderFields = KoreaInvestmentAPI.headers(
+            credentials: credentials,
+            accessToken: accessToken,
+            transactionID: "FHKST01010100"
+        )
+        return request
+    }
+
+    static func decodeQuote(from data: Data, requestedSymbol: String) -> StockQuote? {
+        guard let response = try? JSONDecoder().decode(KoreaInvestmentQuoteResponse.self, from: data),
+              response.rtCode == "0",
+              let output = response.output,
+              let price = Decimal(string: output.currentPrice, locale: Locale(identifier: "en_US_POSIX")),
+              let changePercent = Decimal(string: output.previousDayRate, locale: Locale(identifier: "en_US_POSIX")) else {
+            return nil
+        }
+        return StockQuote(symbol: requestedSymbol, price: price, changePercent: changePercent)
     }
 }
 
-final class TwelveDataTimeSeriesProvider: StockTimeSeriesProvider {
+final class KoreaInvestmentTimeSeriesProvider: StockTimeSeriesProvider {
     private let symbol: String
-    private let apiKey: String
+    private let credentials: KoreaInvestmentCredentials
     private let session: URLSession
     private let baseURL: URL
+    private let tokenProvider: KoreaInvestmentAccessTokenProviding
+    private let calendar: Calendar
 
     init(
         symbol: String,
-        apiKey: String,
+        credentials: KoreaInvestmentCredentials,
         session: URLSession = .shared,
-        baseURL: URL = URL(string: "https://api.twelvedata.com")!
+        baseURL: URL = KoreaInvestmentAPI.productionBaseURL,
+        tokenProvider: KoreaInvestmentAccessTokenProviding? = nil,
+        calendar: Calendar = .current
     ) {
         self.symbol = symbol
-        self.apiKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.credentials = credentials
         self.session = session
         self.baseURL = baseURL
+        self.tokenProvider = tokenProvider ?? KoreaInvestmentAccessTokenProvider(
+            credentials: credentials,
+            session: session,
+            baseURL: baseURL
+        )
+        self.calendar = calendar
     }
 
     func fetchTimeSeries(completion: @escaping (StockChartSeries?) -> Void) {
-        guard !symbol.isEmpty, !apiKey.isEmpty, let url = makeTimeSeriesURL() else {
+        guard !symbol.isEmpty, credentials.isConfigured else {
             completion(nil)
             return
         }
 
-        session.dataTask(with: url) { data, _, error in
-            guard error == nil, let data else {
+        tokenProvider.fetchAccessToken { [weak self] token in
+            guard let self, let token, let request = self.makeTimeSeriesRequest(accessToken: token) else {
                 completion(nil)
                 return
             }
-            completion(Self.decodeTimeSeries(from: data, requestedSymbol: self.symbol))
-        }.resume()
+
+            self.session.dataTask(with: request) { data, _, error in
+                guard error == nil, let data else {
+                    completion(nil)
+                    return
+                }
+                completion(Self.decodeTimeSeries(from: data, requestedSymbol: self.symbol))
+            }.resume()
+        }
     }
 
-    private func makeTimeSeriesURL() -> URL? {
-        var components = URLComponents(url: baseURL.appendingPathComponent("time_series"), resolvingAgainstBaseURL: false)
+    private func makeTimeSeriesRequest(accessToken: String) -> URLRequest? {
+        let endDate = Date()
+        let startDate = calendar.date(byAdding: .day, value: -160, to: endDate) ?? endDate
+        let url = baseURL.appendingPathComponent("uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice")
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         components?.queryItems = [
-            URLQueryItem(name: "symbol", value: symbol),
-            URLQueryItem(name: "interval", value: "1min"),
-            URLQueryItem(name: "outputsize", value: "390"),
-            URLQueryItem(name: "apikey", value: apiKey)
+            URLQueryItem(name: "FID_COND_MRKT_DIV_CODE", value: "J"),
+            URLQueryItem(name: "FID_INPUT_ISCD", value: symbol),
+            URLQueryItem(name: "FID_INPUT_DATE_1", value: KoreaInvestmentDateFormatter.string(from: startDate)),
+            URLQueryItem(name: "FID_INPUT_DATE_2", value: KoreaInvestmentDateFormatter.string(from: endDate)),
+            URLQueryItem(name: "FID_PERIOD_DIV_CODE", value: "D"),
+            URLQueryItem(name: "FID_ORG_ADJ_PRC", value: "1")
         ]
-        return components?.url
+        guard let requestURL = components?.url else { return nil }
+
+        var request = URLRequest(url: requestURL)
+        request.httpMethod = "GET"
+        request.allHTTPHeaderFields = KoreaInvestmentAPI.headers(
+            credentials: credentials,
+            accessToken: accessToken,
+            transactionID: "FHKST03010100"
+        )
+        return request
     }
 
     static func decodeTimeSeries(from data: Data, requestedSymbol: String) -> StockChartSeries? {
-        guard let response = try? JSONDecoder().decode(TwelveDataTimeSeriesResponse.self, from: data) else {
+        guard let response = try? JSONDecoder().decode(KoreaInvestmentTimeSeriesResponse.self, from: data),
+              response.rtCode == "0" else {
             return nil
         }
 
-        let points = response.values.compactMap { item -> StockTimeSeriesPoint? in
-            guard let date = TwelveDataTimeSeriesDateParser.date(from: item.datetime),
-                  let close = Decimal(string: item.close, locale: Locale(identifier: "en_US_POSIX")) else {
+        let points = response.output.compactMap { item -> StockTimeSeriesPoint? in
+            guard let date = KoreaInvestmentDateFormatter.date(from: item.businessDate),
+                  let close = Decimal(string: item.closePrice, locale: Locale(identifier: "en_US_POSIX")) else {
                 return nil
             }
             return StockTimeSeriesPoint(date: date, close: close)
@@ -202,148 +285,268 @@ final class TwelveDataTimeSeriesProvider: StockTimeSeriesProvider {
         .sorted { $0.date < $1.date }
 
         guard !points.isEmpty else { return nil }
-        return StockChartSeries(symbol: response.meta.symbol ?? requestedSymbol, points: points)
+        return StockChartSeries(symbol: requestedSymbol, points: points)
     }
 }
 
-final class TwelveDataSymbolSearchProvider: StockSymbolSearchProviding {
-    private let apiKey: String
+final class KoreaInvestmentSymbolSearchProvider: StockSymbolSearchProviding {
+    private let credentials: KoreaInvestmentCredentials
     private let session: URLSession
     private let baseURL: URL
+    private let tokenProvider: KoreaInvestmentAccessTokenProviding
 
     init(
-        apiKey: String,
+        credentials: KoreaInvestmentCredentials,
         session: URLSession = .shared,
-        baseURL: URL = URL(string: "https://api.twelvedata.com")!
+        baseURL: URL = KoreaInvestmentAPI.productionBaseURL,
+        tokenProvider: KoreaInvestmentAccessTokenProviding? = nil
     ) {
-        self.apiKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.credentials = credentials
         self.session = session
         self.baseURL = baseURL
+        self.tokenProvider = tokenProvider ?? KoreaInvestmentAccessTokenProvider(
+            credentials: credentials,
+            session: session,
+            baseURL: baseURL
+        )
     }
 
     func searchSymbols(matching query: String, completion: @escaping ([StockSymbolSearchResult]) -> Void) {
-        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedQuery.isEmpty, !apiKey.isEmpty, let url = makeSearchURL(query: trimmedQuery) else {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard trimmedQuery.range(of: #"^[0-9A-Z]{6,7}$"#, options: .regularExpression) != nil,
+              credentials.isConfigured else {
             completion([])
             return
         }
 
-        session.dataTask(with: url) { data, _, error in
-            guard error == nil, let data else {
+        tokenProvider.fetchAccessToken { [weak self] token in
+            guard let self, let token,
+                  let request = KoreaInvestmentQuoteProvider(
+                    symbols: [trimmedQuery],
+                    credentials: self.credentials,
+                    session: self.session,
+                    baseURL: self.baseURL,
+                    tokenProvider: self.tokenProvider
+                  ).makeLookupRequest(symbol: trimmedQuery, accessToken: token) else {
                 completion([])
                 return
             }
-            let response = try? JSONDecoder().decode(TwelveDataSymbolSearchResponse.self, from: data)
-            completion(response?.data.map(\.searchResult) ?? [])
-        }.resume()
-    }
 
-    private func makeSearchURL(query: String) -> URL? {
-        var components = URLComponents(url: baseURL.appendingPathComponent("symbol_search"), resolvingAgainstBaseURL: false)
-        components?.queryItems = [
-            URLQueryItem(name: "symbol", value: query),
-            URLQueryItem(name: "outputsize", value: "12"),
-            URLQueryItem(name: "apikey", value: apiKey)
-        ]
-        return components?.url
-    }
-}
-
-private struct TwelveDataQuote {
-    let symbol: String?
-    let close: Decimal?
-    let percentChange: Decimal?
-
-    init?(json: [String: Any]) {
-        symbol = json["symbol"] as? String
-        close = Self.decimal(from: json["close"])
-        percentChange = Self.decimal(from: json["percent_change"])
-    }
-
-    var stockQuote: StockQuote? {
-        guard let symbol, let close, let percentChange else { return nil }
-        return StockQuote(symbol: symbol, price: close, changePercent: percentChange)
-    }
-
-    private static func decimal(from value: Any?) -> Decimal? {
-        if let value = value as? Decimal {
-            return value
+            self.session.dataTask(with: request) { data, _, error in
+                guard error == nil, let data,
+                      let result = Self.decodeSearchResult(from: data, requestedSymbol: trimmedQuery) else {
+                    completion([])
+                    return
+                }
+                completion([result])
+            }.resume()
         }
-        if let value = value as? NSNumber {
-            return value.decimalValue
-        }
-        if let value = value as? String {
-            return Decimal(string: value, locale: Locale(identifier: "en_US_POSIX"))
-        }
-        return nil
     }
-}
 
-private struct TwelveDataSymbolSearchResponse: Decodable {
-    let data: [TwelveDataSymbolSearchItem]
-}
-
-private struct TwelveDataSymbolSearchItem: Decodable {
-    let symbol: String
-    let instrumentName: String?
-    let exchange: String?
-    let country: String?
-    let currency: String?
-    let type: String?
-
-    var searchResult: StockSymbolSearchResult {
-        StockSymbolSearchResult(
-            symbol: symbol,
-            name: instrumentName ?? symbol,
-            exchange: exchange,
-            country: country,
-            currency: currency,
-            type: type
+    static func decodeSearchResult(from data: Data, requestedSymbol: String) -> StockSymbolSearchResult? {
+        guard let response = try? JSONDecoder().decode(KoreaInvestmentQuoteResponse.self, from: data),
+              response.rtCode == "0",
+              let output = response.output else {
+            return nil
+        }
+        return StockSymbolSearchResult(
+            symbol: requestedSymbol,
+            name: output.name ?? requestedSymbol,
+            exchange: "KRX",
+            country: "KR",
+            currency: "KRW",
+            type: nil
         )
     }
+}
 
-    private enum CodingKeys: String, CodingKey {
-        case symbol
-        case instrumentName = "instrument_name"
-        case exchange
-        case country
-        case currency
-        case type
+private extension KoreaInvestmentQuoteProvider {
+    func makeLookupRequest(symbol: String, accessToken: String) -> URLRequest? {
+        makeQuoteRequest(symbol: symbol, accessToken: accessToken)
     }
 }
 
-private struct TwelveDataTimeSeriesResponse: Decodable {
-    let meta: TwelveDataTimeSeriesMeta
-    let values: [TwelveDataTimeSeriesItem]
+protocol KoreaInvestmentAccessTokenProviding {
+    func fetchAccessToken(completion: @escaping (String?) -> Void)
 }
 
-private struct TwelveDataTimeSeriesMeta: Decodable {
-    let symbol: String?
+final class KoreaInvestmentAccessTokenProvider: KoreaInvestmentAccessTokenProviding {
+    private let credentials: KoreaInvestmentCredentials
+    private let session: URLSession
+    private let baseURL: URL
+    private let lock = NSLock()
+    private var cachedToken: CachedAccessToken?
+
+    init(
+        credentials: KoreaInvestmentCredentials,
+        session: URLSession = .shared,
+        baseURL: URL = KoreaInvestmentAPI.productionBaseURL
+    ) {
+        self.credentials = credentials
+        self.session = session
+        self.baseURL = baseURL
+    }
+
+    func fetchAccessToken(completion: @escaping (String?) -> Void) {
+        lock.lock()
+        let token = cachedToken
+        lock.unlock()
+
+        if let token, token.expirationDate > Date().addingTimeInterval(60) {
+            completion(token.value)
+            return
+        }
+
+        guard credentials.isConfigured else {
+            completion(nil)
+            return
+        }
+
+        var request = URLRequest(url: baseURL.appendingPathComponent("oauth2/tokenP"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("text/plain", forHTTPHeaderField: "Accept")
+        request.httpBody = try? JSONEncoder().encode(KoreaInvestmentTokenRequest(
+            grantType: "client_credentials",
+            appKey: credentials.appKey,
+            appSecret: credentials.appSecret
+        ))
+
+        session.dataTask(with: request) { [weak self] data, _, error in
+            guard let self, error == nil, let data,
+                  let response = try? JSONDecoder().decode(KoreaInvestmentTokenResponse.self, from: data),
+                  !response.accessToken.isEmpty else {
+                completion(nil)
+                return
+            }
+
+            let expirationDate = response.expiredAt.flatMap(KoreaInvestmentTokenExpirationParser.date)
+                ?? Date().addingTimeInterval(60 * 60 * 23)
+            self.lock.lock()
+            self.cachedToken = CachedAccessToken(value: response.accessToken, expirationDate: expirationDate)
+            self.lock.unlock()
+            completion(response.accessToken)
+        }.resume()
+    }
 }
 
-private struct TwelveDataTimeSeriesItem: Decodable {
-    let datetime: String
-    let close: String
+private enum KoreaInvestmentAPI {
+    static let productionBaseURL = URL(string: "https://openapi.koreainvestment.com:9443")!
+
+    static func headers(
+        credentials: KoreaInvestmentCredentials,
+        accessToken: String,
+        transactionID: String
+    ) -> [String: String] {
+        [
+            "Content-Type": "application/json",
+            "Accept": "text/plain",
+            "authorization": "Bearer \(accessToken)",
+            "appkey": credentials.appKey,
+            "appsecret": credentials.appSecret,
+            "tr_id": transactionID,
+            "custtype": "P"
+        ]
+    }
 }
 
-private enum TwelveDataTimeSeriesDateParser {
-    private static let dayFormatter: DateFormatter = {
+private struct CachedAccessToken {
+    let value: String
+    let expirationDate: Date
+}
+
+private struct KoreaInvestmentTokenRequest: Encodable {
+    let grantType: String
+    let appKey: String
+    let appSecret: String
+
+    private enum CodingKeys: String, CodingKey {
+        case grantType = "grant_type"
+        case appKey = "appkey"
+        case appSecret = "appsecret"
+    }
+}
+
+private struct KoreaInvestmentTokenResponse: Decodable {
+    let accessToken: String
+    let expiredAt: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case accessToken = "access_token"
+        case expiredAt = "access_token_token_expired"
+    }
+}
+
+private struct KoreaInvestmentQuoteResponse: Decodable {
+    let rtCode: String
+    let output: KoreaInvestmentQuoteOutput?
+
+    private enum CodingKeys: String, CodingKey {
+        case rtCode = "rt_cd"
+        case output
+    }
+}
+
+private struct KoreaInvestmentQuoteOutput: Decodable {
+    let currentPrice: String
+    let previousDayRate: String
+    let name: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case currentPrice = "stck_prpr"
+        case previousDayRate = "prdy_ctrt"
+        case name = "hts_kor_isnm"
+    }
+}
+
+private struct KoreaInvestmentTimeSeriesResponse: Decodable {
+    let rtCode: String
+    let output: [KoreaInvestmentTimeSeriesItem]
+
+    private enum CodingKeys: String, CodingKey {
+        case rtCode = "rt_cd"
+        case output = "output2"
+    }
+}
+
+private struct KoreaInvestmentTimeSeriesItem: Decodable {
+    let businessDate: String
+    let closePrice: String
+
+    private enum CodingKeys: String, CodingKey {
+        case businessDate = "stck_bsop_date"
+        case closePrice = "stck_clpr"
+    }
+}
+
+private enum KoreaInvestmentDateFormatter {
+    private static let formatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = TimeZone(identifier: "Asia/Seoul")
+        formatter.dateFormat = "yyyyMMdd"
         return formatter
     }()
 
-    private static let minuteFormatter: DateFormatter = {
+    static func string(from date: Date) -> String {
+        formatter.string(from: date)
+    }
+
+    static func date(from value: String) -> Date? {
+        formatter.date(from: value)
+    }
+}
+
+private enum KoreaInvestmentTokenExpirationParser {
+    private static let formatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.timeZone = TimeZone(identifier: "Asia/Seoul")
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
         return formatter
     }()
 
     static func date(from value: String) -> Date? {
-        minuteFormatter.date(from: value) ?? dayFormatter.date(from: value)
+        formatter.date(from: value)
     }
 }

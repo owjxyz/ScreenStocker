@@ -2,75 +2,81 @@ import XCTest
 
 final class StockQuoteTests: XCTestCase {
     func testDemoProviderReturnsConfiguredSymbols() {
-        let provider = DemoStockQuoteProvider(symbols: ["AAPL", "MSFT"])
+        let provider = DemoStockQuoteProvider(symbols: ["005930", "000660"])
         let expectation = expectation(description: "quotes")
 
         provider.fetchQuotes { quotes in
-            XCTAssertEqual(quotes.map(\.symbol), ["AAPL", "MSFT"])
+            XCTAssertEqual(quotes.map(\.symbol), ["005930", "000660"])
             expectation.fulfill()
         }
 
         wait(for: [expectation], timeout: 1)
     }
 
-    func testTwelveDataProviderDecodesSingleQuote() throws {
+    func testKoreaInvestmentProviderDecodesQuote() throws {
         let data = try XCTUnwrap("""
         {
-          "symbol": "AAPL",
-          "close": "182.52",
-          "percent_change": "1.24"
-        }
-        """.data(using: .utf8))
-
-        let quotes = TwelveDataQuoteProvider.decodeQuotes(from: data, requestedSymbols: ["AAPL"])
-
-        XCTAssertEqual(quotes, [StockQuote(symbol: "AAPL", price: Decimal(string: "182.52")!, changePercent: Decimal(string: "1.24")!)])
-    }
-
-    func testTwelveDataProviderDecodesBatchQuotesInRequestedOrder() throws {
-        let data = try XCTUnwrap("""
-        {
-          "MSFT": {
-            "symbol": "MSFT",
-            "close": "410.10",
-            "percent_change": "-0.32"
-          },
-          "AAPL": {
-            "symbol": "AAPL",
-            "close": "182.52",
-            "percent_change": "1.24"
+          "rt_cd": "0",
+          "output": {
+            "stck_prpr": "70000",
+            "prdy_ctrt": "1.24",
+            "hts_kor_isnm": "Samsung Electronics"
           }
         }
         """.data(using: .utf8))
 
-        let quotes = TwelveDataQuoteProvider.decodeQuotes(from: data, requestedSymbols: ["AAPL", "MSFT"])
+        let quote = KoreaInvestmentQuoteProvider.decodeQuote(from: data, requestedSymbol: "005930")
 
-        XCTAssertEqual(quotes.map(\.symbol), ["AAPL", "MSFT"])
+        XCTAssertEqual(quote, StockQuote(symbol: "005930", price: Decimal(string: "70000")!, changePercent: Decimal(string: "1.24")!))
     }
 
-    func testTwelveDataProviderDecodesTimeSeriesInChronologicalOrder() throws {
+    func testKoreaInvestmentSymbolSearchDecodesQuoteName() throws {
         let data = try XCTUnwrap("""
         {
-          "meta": {
-            "symbol": "AAPL"
-          },
-          "values": [
-            {
-              "datetime": "2026-05-08",
-              "close": "183.25"
-            },
-            {
-              "datetime": "2026-05-07",
-              "close": "181.40"
-            }
-          ],
-          "status": "ok"
+          "rt_cd": "0",
+          "output": {
+            "stck_prpr": "70000",
+            "prdy_ctrt": "1.24",
+            "hts_kor_isnm": "Samsung Electronics"
+          }
         }
         """.data(using: .utf8))
 
-        let series = try XCTUnwrap(TwelveDataTimeSeriesProvider.decodeTimeSeries(from: data, requestedSymbol: "AAPL"))
+        let result = KoreaInvestmentSymbolSearchProvider.decodeSearchResult(from: data, requestedSymbol: "005930")
 
-        XCTAssertEqual(series.symbol, "AAPL")
-        XCTAssertEqual(series.points.map(\.close), [Decimal(string: "181.40")!, Decimal(string: "183.25")!])
+        XCTAssertEqual(
+            result,
+            StockSymbolSearchResult(
+                symbol: "005930",
+                name: "Samsung Electronics",
+                exchange: "KRX",
+                country: "KR",
+                currency: "KRW",
+                type: nil
+            )
+        )
+    }
+
+    func testKoreaInvestmentProviderDecodesTimeSeriesInChronologicalOrder() throws {
+        let data = try XCTUnwrap("""
+        {
+          "rt_cd": "0",
+          "output2": [
+            {
+              "stck_bsop_date": "20260508",
+              "stck_clpr": "70500"
+            },
+            {
+              "stck_bsop_date": "20260507",
+              "stck_clpr": "69800"
+            }
+          ]
+        }
+        """.data(using: .utf8))
+
+        let series = try XCTUnwrap(KoreaInvestmentTimeSeriesProvider.decodeTimeSeries(from: data, requestedSymbol: "005930"))
+
+        XCTAssertEqual(series.symbol, "005930")
+        XCTAssertEqual(series.points.map(\.close), [Decimal(string: "69800")!, Decimal(string: "70500")!])
     }
 }

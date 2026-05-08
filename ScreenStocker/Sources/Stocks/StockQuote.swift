@@ -28,7 +28,7 @@ struct StockQuote: Equatable {
     }()
 
     static func currencyText(for value: Decimal) -> String {
-        "$\(decimalFormatter.string(for: value) ?? "\(value)")"
+        "₩\(decimalFormatter.string(for: value) ?? "\(value)")"
     }
 }
 

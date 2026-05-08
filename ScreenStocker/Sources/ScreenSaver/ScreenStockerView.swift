@@ -24,6 +24,16 @@ final class ScreenStockerView: ScreenSaverView {
         animationTimeInterval = 1.0 / 30.0
         layer?.backgroundColor = NSColor.black.cgColor
         renderer.attach(to: self)
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(preferencesDidChange),
+            name: StockerPreferences.didChangeNotification,
+            object: nil
+        )
+    }
+
+    deinit {
+        DistributedNotificationCenter.default().removeObserver(self)
     }
 
     override func startAnimation() {
@@ -64,12 +74,22 @@ final class ScreenStockerView: ScreenSaverView {
         let quoteProvider: StockQuoteProvider
         let timeSeriesProvider: StockTimeSeriesProvider
 
-        if preferences.twelveDataAPIKey.isEmpty {
+        let credentials = preferences.koreaInvestmentCredentials
+        if credentials.isConfigured {
+            let tokenProvider = KoreaInvestmentAccessTokenProvider(credentials: credentials)
+            quoteProvider = KoreaInvestmentQuoteProvider(
+                symbols: [symbol],
+                credentials: credentials,
+                tokenProvider: tokenProvider
+            )
+            timeSeriesProvider = KoreaInvestmentTimeSeriesProvider(
+                symbol: symbol,
+                credentials: credentials,
+                tokenProvider: tokenProvider
+            )
+        } else {
             quoteProvider = DemoStockQuoteProvider(symbols: [symbol])
             timeSeriesProvider = DemoStockTimeSeriesProvider(symbol: symbol)
-        } else {
-            quoteProvider = TwelveDataQuoteProvider(symbols: [symbol], apiKey: preferences.twelveDataAPIKey)
-            timeSeriesProvider = TwelveDataTimeSeriesProvider(symbol: symbol, apiKey: preferences.twelveDataAPIKey)
         }
 
         let group = DispatchGroup()
@@ -92,7 +112,7 @@ final class ScreenStockerView: ScreenSaverView {
             guard let self else { return }
             if let quote, let series {
                 self.renderer.render(quote: quote, series: series)
-            } else if !self.preferences.twelveDataAPIKey.isEmpty {
+            } else if self.preferences.koreaInvestmentCredentials.isConfigured {
                 self.renderDemoMarketData(for: symbol)
             }
         }
@@ -116,6 +136,13 @@ final class ScreenStockerView: ScreenSaverView {
         }
         if Date().timeIntervalSince(lastMarketDataRefreshDate) >= marketDataRefreshInterval {
             refreshMarketData()
+        }
+    }
+
+    @objc private func preferencesDidChange() {
+        DispatchQueue.main.async { [weak self] in
+            self?.lastMarketDataRefreshDate = nil
+            self?.refreshMarketData()
         }
     }
 }

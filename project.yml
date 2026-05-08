@@ -23,6 +23,7 @@ targets:
       - sdk: AppKit.framework
       - sdk: ScreenSaver.framework
       - sdk: QuartzCore.framework
+      - sdk: Security.framework
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.lukeoh.ScreenStocker
@@ -43,6 +44,7 @@ targets:
     dependencies:
       - sdk: AppKit.framework
       - sdk: ScreenSaver.framework
+      - sdk: Security.framework
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.lukeoh.ScreenStockerApp
