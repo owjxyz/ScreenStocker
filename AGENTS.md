@@ -1,24 +1,32 @@
 # ScreenStocker Agent Guide
 
-이 프로젝트의 목표는 Apple SwiftUI와 macOS 기본 프레임워크를 최대한 활용해 가볍고 유지보수하기 쉬운 주식 현황 화면보호기를 구현하는 것이다. 새 기능을 만들 때는 외부 의존성을 추가하기 전에 SwiftUI, AppKit, ScreenSaver, Foundation, Combine/Observation, URLSession, UserDefaults/App Groups, Security Keychain 등 Apple이 제공하는 기본 라이브러리로 해결할 수 있는지 먼저 검토한다.
+## Critical Language Rule
+
+- Always conduct reasoning, analysis, code investigation, implementation planning, and tool-oriented work in English.
+- The final user-facing briefing at the end of a task must be written in Korean.
+- Treat this as a high-priority collaboration rule for this repository. Intermediate notes, code comments, commit messages, and documentation may remain English unless the user explicitly requests Korean.
+
+## Project Goal
+
+The goal of this project is to build a lightweight, maintainable stock-status screen saver by using Apple SwiftUI and native macOS frameworks as much as possible. When adding new features, first check whether the requirement can be handled with Apple-provided libraries such as SwiftUI, AppKit, ScreenSaver, Foundation, Combine/Observation, URLSession, UserDefaults/App Groups, and Security Keychain before adding external dependencies.
 
 ## Product Direction
 
-- ScreenStocker는 macOS 화면보호기에서 선택한 종목의 주식 가격 현황과 그래프를 보여준다.
-- 화면보호기는 5분에 한 번씩 주식 가격과 차트 데이터를 요청해 화면을 갱신한다.
-- 화면보호기에 표시할 종목은 화면보호기 설정 옵션에서 선택한다.
-- 선택 가능한 종목 목록은 별도 관리 앱에서 미리 설정한 watchlist를 기반으로 한다.
-- 관리 앱은 watchlist 추가, 삭제, 종목 검색, API 인증 정보 저장 같은 준비 작업을 담당한다.
-- 화면보호기 설정은 사용자가 watchlist 중 하나의 종목을 고르는 데 집중한다.
+- ScreenStocker displays stock price status and charts for selected symbols inside a macOS screen saver.
+- The screen saver refreshes stock quotes and chart data every 5 minutes.
+- The symbol shown in the screen saver is selected from the screen saver configuration options.
+- The selectable symbol list is based on a watchlist prepared in a separate management app.
+- The management app owns preparation tasks such as adding and removing watchlist items, searching symbols, and storing API credentials.
+- The screen saver configuration should focus on choosing one symbol from the existing watchlist.
 
 ## Implementation Principles
 
-- SwiftUI를 우선 사용한다. 화면, 설정 UI, 상태 표현, 리스트, 차트 주변 레이아웃은 가능한 한 SwiftUI 기본 컴포넌트로 구현한다.
-- 화면보호기 진입점처럼 AppKit 또는 ScreenSaver.framework가 필요한 부분은 얇은 어댑터로 유지하고, 실제 UI와 상태 로직은 SwiftUI 뷰와 독립 모델로 분리한다.
-- Apple 기본 프레임워크로 충분한 경우 외부 패키지를 추가하지 않는다.
-- 렌더링은 단순하고 예측 가능하게 유지한다. 5분마다 갱신되는 금융 데이터 화면이므로 고비용 애니메이션, 복잡한 실시간 렌더 루프, 불필요한 백그라운드 작업을 피한다.
-- 네트워크, 저장소, 화면 렌더링, 설정 UI 책임을 분리한다.
-- 화면보호기는 장시간 실행될 수 있으므로 메모리 증가, 타이머 중복, 네트워크 요청 누수를 특히 경계한다.
+- Prefer SwiftUI. Screens, configuration UI, state presentation, lists, and chart-adjacent layout should use native SwiftUI components whenever practical.
+- Keep AppKit or ScreenSaver.framework entry points as thin adapters where they are required, and separate actual UI and state logic into SwiftUI views and independent models.
+- Do not add external packages when Apple native frameworks are sufficient.
+- Keep rendering simple and predictable. This is a financial data screen that refreshes every 5 minutes, so avoid expensive animations, complex real-time render loops, and unnecessary background work.
+- Separate responsibilities for networking, persistence, screen rendering, and configuration UI.
+- The screen saver may run for long periods, so be especially careful about memory growth, duplicated timers, and leaked network requests.
 
 ## Preferred Apple APIs
 
@@ -29,7 +37,7 @@
 - Scheduling: Swift concurrency `Task`, `Clock`, or a carefully owned `Timer`
 - Persistence: `UserDefaults` with a shared suite when the app and saver need shared preferences
 - Secrets: Keychain via Security.framework
-- Formatting: Foundation `NumberFormatter`, `DateFormatter`, `FormatStyle`
+- Formatting: Foundation `NumberFormatter`, `DateFormatter`, and `FormatStyle`
 
 ## Data Refresh Rules
 
@@ -65,7 +73,7 @@
 - Use simple native controls: `List`, `Picker`, `Form`, `Toggle`, `Button`, `ProgressView`, and `Chart` or `Path` where appropriate.
 - Keep view state minimal and derived from model state where possible.
 - Prefer clear empty, loading, success, and error states over hidden implicit behavior.
-- Use system colors, system fonts, and adaptive layout so the saver works in light/dark and across displays.
+- Use system colors, system fonts, and adaptive layout so the saver works in light/dark mode and across displays.
 - Avoid ornamental UI that increases rendering cost without improving glanceability.
 
 ## Error Handling
