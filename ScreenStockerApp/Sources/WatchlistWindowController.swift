@@ -8,7 +8,12 @@ final class WatchlistWindowController: NSWindowController {
         let window = NSWindow(contentViewController: hostingController)
         window.title = "ScreenStocker"
         window.isReleasedWhenClosed = false
-        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.toolbarStyle = .unified
+        window.backgroundColor = .windowBackgroundColor
+        window.isMovableByWindowBackground = true
         window.setContentSize(NSSize(width: 880, height: 560))
         window.minSize = NSSize(width: 760, height: 500)
 
@@ -78,12 +83,10 @@ private struct WatchlistRootView: View {
     @ObservedObject var viewModel: WatchlistViewModel
 
     var body: some View {
-        HStack(spacing: 0) {
+        NavigationSplitView {
             sidebar
-                .frame(width: 176)
-
-            Divider()
-
+                .navigationSplitViewColumnWidth(min: 176, ideal: 188, max: 240)
+        } detail: {
             VStack(spacing: 0) {
                 content
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -92,18 +95,21 @@ private struct WatchlistRootView: View {
 
                 footer
             }
+            .background(Color(nsColor: .windowBackgroundColor))
         }
-        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     private var sidebar: some View {
         List(selection: $viewModel.selectedSection) {
-            ForEach(WatchlistViewModel.Section.allCases) { section in
-                Label(section.rawValue, systemImage: section.symbolName)
-                    .tag(section)
+            Section("ScreenStocker") {
+                ForEach(WatchlistViewModel.Section.allCases) { section in
+                    Label(section.rawValue, systemImage: section.symbolName)
+                        .tag(section)
+                }
             }
         }
         .listStyle(.sidebar)
+        .navigationTitle("ScreenStocker")
     }
 
     @ViewBuilder
