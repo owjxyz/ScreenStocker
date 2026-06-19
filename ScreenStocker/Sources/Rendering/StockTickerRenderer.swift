@@ -112,8 +112,8 @@ private struct SaverLineChart: View {
                 Path { path in
                     guard let firstPoint = points.first else { return }
                     path.move(to: firstPoint)
-                    for point in points.dropFirst() {
-                        path.addLine(to: point)
+                    for segment in StockChartGeometry.smoothCurveSegments(through: points) {
+                        path.addCurve(to: segment.end, control1: segment.control1, control2: segment.control2)
                     }
                 }
                 .stroke(lineColor, style: StrokeStyle(lineWidth: 6, lineCap: .round, lineJoin: .round))
@@ -140,20 +140,7 @@ private struct SaverLineChart: View {
     }
 
     private func normalizedPoints(in size: CGSize) -> [CGPoint] {
-        let values = series.points.map { NSDecimalNumber(decimal: $0.close).doubleValue }
-        guard values.count > 1,
-              let minValue = values.min(),
-              let maxValue = values.max() else {
-            return []
-        }
-
-        let range = max(maxValue - minValue, 1)
-        return values.enumerated().map { index, value in
-            let x = CGFloat(index) / CGFloat(values.count - 1) * size.width
-            let yRatio = (value - minValue) / range
-            let y = size.height - CGFloat(yRatio) * size.height
-            return CGPoint(x: x, y: y)
-        }
+        StockChartGeometry.normalizedPoints(for: series, in: size)
     }
 }
 

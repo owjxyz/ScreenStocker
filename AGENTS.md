@@ -91,11 +91,13 @@ The goal of this project is to build a lightweight, maintainable stock-status sc
 - Add focused unit tests for parsing, provider response mapping, watchlist persistence, selected-symbol fallback, and refresh scheduling rules.
 - For UI changes, verify the management app owns selected-symbol writes and the screen saver configuration does not duplicate symbol selection.
 - When changing the screen saver configuration sheet, verify that the "Open ScreenStocker" action can launch the management app and that status messages do not shift, clip, or overlap the sheet controls.
-- Before finishing implementation work, run the project build script when practical:
+- Before finishing implementation work, run the project build script when practical. When the task affects installed app behavior, screen saver rendering, configuration UI, preferences, or anything that must be observed through macOS System Settings or ScreenSaverEngine, use the refresh option so stale host processes reload the newly installed bundle:
 
 ```sh
-./Scripts/build.sh
+./Scripts/build.sh --refresh
 ```
+
+- Use plain `./Scripts/build.sh` only when a compile check is sufficient and no installed app or screen saver host needs to be refreshed.
 
 - If changing screen saver lifecycle or timer behavior, manually verify that refresh starts, repeats every 5 minutes, and stops cleanly when the saver is closed.
 
