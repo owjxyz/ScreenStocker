@@ -12,16 +12,16 @@ The goal of this project is to build a lightweight, maintainable stock-status sc
 
 ## Product Direction
 
-- ScreenStocker displays stock price status and charts for selected symbols inside a macOS screen saver.
-- The screen saver refreshes stock quotes and chart data every 5 minutes.
-- The symbol shown in the screen saver is selected from the screen saver configuration options.
+- ScreenStocker displays stock price status and market visualizations for selected symbols inside a macOS screen saver.
+- The screen saver refreshes stock quotes and any visualization data every 5 minutes.
+- The symbol shown in the screen saver is selected in the management app, not in the screen saver configuration sheet.
 - The selectable symbol list is based on a watchlist prepared in a separate management app.
-- The management app owns preparation tasks such as adding and removing watchlist items, searching symbols, and storing API credentials.
-- The screen saver configuration should focus on choosing one symbol from the existing watchlist.
+- The management app owns preparation tasks such as adding and removing watchlist items, choosing the displayed symbol, searching symbols, and storing API credentials.
+- The screen saver configuration should stay lightweight. It should not duplicate watchlist or symbol-selection controls; it should provide a clear path to open the management app when the user needs to change ScreenStocker settings.
 
 ## Implementation Principles
 
-- Prefer SwiftUI. Screens, configuration UI, state presentation, lists, and chart-adjacent layout should use native SwiftUI components whenever practical.
+- Prefer SwiftUI. Screens, configuration UI, state presentation, lists, and visualization-adjacent layout should use native SwiftUI components whenever practical.
 - Keep AppKit or ScreenSaver.framework entry points as thin adapters where they are required, and separate actual UI and state logic into SwiftUI views and independent models.
 - Do not add external packages when Apple native frameworks are sufficient.
 - Keep rendering simple and predictable. This is a financial data screen that refreshes every 5 minutes, so avoid expensive animations, complex real-time render loops, and unnecessary background work.
@@ -32,7 +32,7 @@ The goal of this project is to build a lightweight, maintainable stock-status sc
 
 - UI: SwiftUI
 - Screen saver hosting: ScreenSaver.framework with a minimal AppKit bridge
-- Charts: Swift Charts where available, or lightweight SwiftUI `Path` drawing when a custom saver-safe graph is simpler
+- Market visualizations: Swift Charts where available, or lightweight SwiftUI `Path`/shape drawing when a custom saver-safe visualization is simpler
 - Networking: `URLSession`
 - Scheduling: Swift concurrency `Task`, `Clock`, or a carefully owned `Timer`
 - Persistence: `UserDefaults` with a shared suite when the app and saver need shared preferences
@@ -41,19 +41,21 @@ The goal of this project is to build a lightweight, maintainable stock-status sc
 
 ## Data Refresh Rules
 
-- The stock quote and graph data refresh interval is 5 minutes.
+- The stock quote and market visualization data refresh interval is 5 minutes.
 - Refresh immediately when the screen saver starts if a selected symbol is available.
 - Avoid overlapping requests. If a previous refresh is still running, do not start another request for the same symbol.
 - Cancel refresh work when the screen saver stops animating or is deallocated.
-- Cache the last successful quote and chart data so the UI can continue showing useful information during transient network failures.
+- Cache the last successful quote and visualization data so the UI can continue showing useful information during transient network failures.
 - If credentials are missing or the provider fails, use an explicit fallback state or demo data only where the current product behavior expects it.
 
 ## Watchlist And Selection
 
 - The management app owns watchlist editing.
-- The screen saver configuration UI reads the saved watchlist and lets the user choose from it.
-- The screen saver should not require free-form ticker input in its configuration UI.
-- If the watchlist is empty, show a clear empty state and guide the user to configure the list in the management app.
+- The management app owns displayed-symbol selection.
+- The screen saver configuration UI should not read and present the watchlist as a selection control.
+- The screen saver configuration UI should not require free-form ticker input or expose a symbol picker.
+- The screen saver configuration UI may provide an "Open ScreenStocker" action that launches the management app through `NSWorkspace`.
+- If the watchlist is empty or the selected symbol is invalid, guide the user to configure the list in the management app rather than adding watchlist-management controls to the screen saver configuration sheet.
 - Store the selected symbol separately from the watchlist so deleting a symbol can be handled gracefully.
 - If the selected symbol no longer exists in the watchlist, fall back to the first available watchlist item or an empty state.
 
@@ -63,6 +65,7 @@ The goal of this project is to build a lightweight, maintainable stock-status sc
 - Keep shared preferences and app/saver settings under `ScreenStocker/Sources/Preferences`.
 - Keep screen saver hosting code under `ScreenStocker/Sources/ScreenSaver`.
 - Keep visual rendering components under `ScreenStocker/Sources/Rendering`.
+- Keep chart and visualization style decisions separate from data-fetching and persistence code so additional presentation types can be added without changing provider behavior.
 - Keep the watchlist management app under `ScreenStockerApp/Sources`.
 - Prefer small, testable services such as quote providers, time-series providers, watchlist stores, and selection stores.
 - Avoid putting networking directly inside SwiftUI views.
@@ -70,7 +73,7 @@ The goal of this project is to build a lightweight, maintainable stock-status sc
 
 ## SwiftUI Style
 
-- Use simple native controls: `List`, `Picker`, `Form`, `Toggle`, `Button`, `ProgressView`, and `Chart` or `Path` where appropriate.
+- Use simple native controls: `List`, `Picker`, `Form`, `Toggle`, `Button`, `ProgressView`, and `Chart`, `Path`, or purpose-built SwiftUI views where appropriate.
 - Keep view state minimal and derived from model state where possible.
 - Prefer clear empty, loading, success, and error states over hidden implicit behavior.
 - Use system colors, system fonts, and adaptive layout so the saver works in light/dark mode and across displays.
@@ -86,7 +89,8 @@ The goal of this project is to build a lightweight, maintainable stock-status sc
 ## Testing And Verification
 
 - Add focused unit tests for parsing, provider response mapping, watchlist persistence, selected-symbol fallback, and refresh scheduling rules.
-- For UI changes, verify the management app and screen saver configuration still read/write the same shared settings.
+- For UI changes, verify the management app owns selected-symbol writes and the screen saver configuration does not duplicate symbol selection.
+- When changing the screen saver configuration sheet, verify that the "Open ScreenStocker" action can launch the management app and that status messages do not shift, clip, or overlap the sheet controls.
 - Before finishing implementation work, run the project build script when practical:
 
 ```sh
@@ -100,4 +104,4 @@ The goal of this project is to build a lightweight, maintainable stock-status sc
 - Do not introduce a heavy cross-platform UI framework.
 - Do not add a database unless watchlist and settings requirements outgrow simple shared preferences.
 - Do not build a high-frequency trading dashboard. The intended cadence is a calm screen saver that updates every 5 minutes.
-- Do not make the screen saver configuration responsible for full watchlist management unless the product direction changes.
+- Do not make the screen saver configuration responsible for watchlist management or symbol selection unless the product direction changes.
