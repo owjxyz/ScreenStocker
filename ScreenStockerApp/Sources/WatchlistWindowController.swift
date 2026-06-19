@@ -9,7 +9,7 @@ final class WatchlistWindowController: NSWindowController {
         window.title = "ScreenStocker"
         window.isReleasedWhenClosed = false
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
-        window.titleVisibility = .hidden
+        window.titleVisibility = .visible
         window.titlebarAppearsTransparent = true
         window.toolbarStyle = .unified
         window.backgroundColor = .windowBackgroundColor
@@ -85,17 +85,39 @@ private struct WatchlistRootView: View {
     var body: some View {
         NavigationSplitView {
             sidebar
-                .navigationSplitViewColumnWidth(min: 176, ideal: 188, max: 240)
+                .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 260)
         } detail: {
-            VStack(spacing: 0) {
-                content
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            content
+        }
+        .toolbar {
+            ToolbarItemGroup {
+                Button {
+                    viewModel.performAction("Add Symbol")
+                } label: {
+                    Label("Add Symbol", systemImage: "plus")
+                }
 
-                Divider()
-
-                footer
+                Button {
+                    viewModel.performAction("Remove")
+                } label: {
+                    Label("Remove", systemImage: "minus")
+                }
+                .disabled(viewModel.selectedSection != .watchlist)
             }
-            .background(Color(nsColor: .windowBackgroundColor))
+
+            ToolbarItemGroup {
+                Button {
+                    viewModel.performAction("Preview Screen Saver")
+                } label: {
+                    Label("Preview Screen Saver", systemImage: "play.rectangle")
+                }
+
+                Button {
+                    viewModel.performAction("Install Screen Saver")
+                } label: {
+                    Label("Install Screen Saver", systemImage: "display.and.arrow.down")
+                }
+            }
         }
     }
 
@@ -117,29 +139,14 @@ private struct WatchlistRootView: View {
         switch viewModel.selectedSection {
         case .overview:
             OverviewView(viewModel: viewModel)
+                .navigationTitle("Overview")
         case .watchlist:
             WatchlistView(viewModel: viewModel)
+                .navigationTitle("Watchlist")
         case .saver:
             ScreenSaverSettingsView(viewModel: viewModel)
+                .navigationTitle("Screen Saver")
         }
-    }
-
-    private var footer: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "paintpalette")
-                .foregroundStyle(.secondary)
-            Text(viewModel.statusMessage)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            Spacer()
-            Button("Apply") {
-                viewModel.performAction("Apply")
-            }
-            .keyboardShortcut(.defaultAction)
-        }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 12)
     }
 }
 
