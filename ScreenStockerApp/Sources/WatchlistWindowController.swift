@@ -9,8 +9,8 @@ final class WatchlistWindowController: NSWindowController {
         window.title = "ScreenStocker"
         window.isReleasedWhenClosed = false
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-        window.setContentSize(NSSize(width: 700, height: 480))
-        window.minSize = NSSize(width: 640, height: 420)
+        window.setContentSize(NSSize(width: 880, height: 560))
+        window.minSize = NSSize(width: 760, height: 500)
 
         super.init(window: window)
     }
@@ -23,170 +23,54 @@ final class WatchlistWindowController: NSWindowController {
 @MainActor
 final class WatchlistViewModel: ObservableObject {
     enum Section: String, CaseIterable, Identifiable {
+        case overview = "Overview"
         case watchlist = "Watchlist"
-        case apiKeys = "API Keys"
+        case saver = "Screen Saver"
 
         var id: String { rawValue }
 
         var symbolName: String {
             switch self {
+            case .overview:
+                return "rectangle.grid.2x2"
             case .watchlist:
                 return "star"
-            case .apiKeys:
-                return "key"
+            case .saver:
+                return "display"
             }
         }
     }
 
-    @Published var selectedSection: Section = .watchlist
-    @Published var symbols: [String]
-    @Published var inputSymbol = ""
-    @Published var searchResults: [StockSymbolSearchResult] = []
-    @Published var appKey: String
-    @Published var appSecret: String
-    @Published var isShowingSavedCredentials = false
-    @Published var statusMessage = ""
+    @Published var selectedSection: Section = .overview
+    @Published var selectedSymbol: String
+    @Published var statusMessage = "Ready."
 
+    let symbols: [String]
     private let preferences: StockerPreferences
-    private let installer = ScreenSaverInstaller()
 
     init(preferences: StockerPreferences) {
         self.preferences = preferences
         self.symbols = preferences.registeredSymbols
-        self.appKey = preferences.koreaInvestmentAppKey
-        self.appSecret = preferences.koreaInvestmentAppSecret
-        updateStatus()
-    }
-
-    var savedAppKeyPreview: String {
-        displayCredential(preferences.koreaInvestmentAppKey)
-    }
-
-    var savedAppSecretPreview: String {
-        displayCredential(preferences.koreaInvestmentAppSecret)
-    }
-
-    var credentialsStatus: String {
-        preferences.koreaInvestmentCredentials.isConfigured ? "KIS credentials are saved." : "Demo data is active."
-    }
-
-    func addSymbol() {
-        let symbol = normalizedSymbol(inputSymbol)
-        guard !symbol.isEmpty, !symbols.contains(symbol) else { return }
-
-        symbols.append(symbol)
-        inputSymbol = ""
-        saveWatchlist()
-        statusMessage = "Added \(symbol). Screen saver dropdown updated."
-    }
-
-    func addSearchResult(_ result: StockSymbolSearchResult) {
-        inputSymbol = result.symbol
-        addSymbol()
-    }
-
-    func removeSymbols(at offsets: IndexSet) {
-        let removed = offsets.compactMap { symbols.indices.contains($0) ? symbols[$0] : nil }
-        symbols.remove(atOffsets: offsets)
-        saveWatchlist()
-        statusMessage = removed.isEmpty ? "\(symbols.count) symbol(s) ready." : "Removed \(removed.joined(separator: ", "))."
-    }
-
-    func addDemoSet() {
-        for symbol in StockerPreferences.demoSymbols where !symbols.contains(symbol) {
-            symbols.append(symbol)
-        }
-        saveWatchlist()
-        statusMessage = "Added demo symbols. Screen saver dropdown updated."
-    }
-
-    func searchSymbols() {
-        let query = inputSymbol.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return }
-
-        let credentials = currentCredentials()
-        guard credentials.isConfigured else {
-            statusMessage = "Add KIS credentials before searching."
-            return
-        }
-
-        statusMessage = "Looking up KIS symbol..."
-        KoreaInvestmentSymbolSearchProvider(credentials: credentials).searchSymbols(matching: query) { [weak self] results in
-            DispatchQueue.main.async {
-                self?.searchResults = results
-                self?.statusMessage = results.isEmpty ? "No matching symbols found." : "\(results.count) result(s) found."
-            }
-        }
-    }
-
-    func applyChanges() {
-        do {
-            try preferences.saveKoreaInvestmentCredentials(appKey: appKey, appSecret: appSecret)
-        } catch {
-            statusMessage = "Could not save KIS credentials: \(error.localizedDescription)"
-            return
-        }
-
-        appKey = preferences.koreaInvestmentAppKey
-        appSecret = preferences.koreaInvestmentAppSecret
-        saveWatchlist()
-
-        do {
-            try installer.reinstall()
-            statusMessage = "Applied and reinstalled screen saver."
-        } catch {
-            statusMessage = "Applied, but install failed: \(error.localizedDescription)"
-        }
-    }
-
-    func clearCredentials() {
-        appKey = ""
-        appSecret = ""
-        statusMessage = "KIS credentials cleared. Apply to switch to demo data."
-    }
-
-    func refreshSavedCredentials() {
-        appKey = preferences.koreaInvestmentAppKey
-        appSecret = preferences.koreaInvestmentAppSecret
-        statusMessage = credentialsStatus
-    }
-
-    func updateStatus() {
-        switch selectedSection {
-        case .watchlist:
-            statusMessage = "\(symbols.count) symbol(s) ready."
-        case .apiKeys:
-            statusMessage = credentialsStatus
-        }
-    }
-
-    private func saveWatchlist() {
+        self.selectedSymbol = preferences.selectedSymbol ?? preferences.symbolForScreenSaverDisplay ?? MarketDataCatalog.symbols[0]
         preferences.registeredSymbols = symbols
-        if let selectedSymbol = preferences.selectedSymbol, !preferences.registeredSymbols.contains(selectedSymbol) {
-            preferences.selectedSymbol = nil
-        }
-        symbols = preferences.registeredSymbols
     }
 
-    private func currentCredentials() -> KoreaInvestmentCredentials {
-        let enteredKey = appKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        let enteredSecret = appSecret.trimmingCharacters(in: .whitespacesAndNewlines)
-        return KoreaInvestmentCredentials(
-            appKey: enteredKey.isEmpty ? preferences.koreaInvestmentAppKey : enteredKey,
-            appSecret: enteredSecret.isEmpty ? preferences.koreaInvestmentAppSecret : enteredSecret
-        )
+    var selectedQuote: StockQuote {
+        MarketDataCatalog.quote(for: selectedSymbol)
     }
 
-    private func normalizedSymbol(_ symbol: String) -> String {
-        symbol.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+    var selectedSeries: StockChartSeries {
+        MarketDataCatalog.chartSeries(for: selectedSymbol)
     }
 
-    private func displayCredential(_ credential: String) -> String {
-        guard !credential.isEmpty else { return "not saved" }
-        guard !isShowingSavedCredentials else { return credential }
-        guard credential.count > 10 else { return String(repeating: "*", count: credential.count) }
+    func selectSymbol(_ symbol: String) {
+        selectedSymbol = symbol
+        preferences.selectedSymbol = symbol
+        statusMessage = "\(symbol) selected for the screen saver."
+    }
 
-        return "\(credential.prefix(4))...\(credential.suffix(4))"
+    func performAction(_ title: String) {
+        statusMessage = "\(title) selected."
     }
 }
 
@@ -196,11 +80,11 @@ private struct WatchlistRootView: View {
     var body: some View {
         HStack(spacing: 0) {
             sidebar
-                .frame(width: 160)
+                .frame(width: 176)
 
             Divider()
 
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(spacing: 0) {
                 content
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
@@ -209,9 +93,7 @@ private struct WatchlistRootView: View {
                 footer
             }
         }
-        .onChange(of: viewModel.selectedSection) { _ in
-            viewModel.updateStatus()
-        }
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     private var sidebar: some View {
@@ -227,145 +109,299 @@ private struct WatchlistRootView: View {
     @ViewBuilder
     private var content: some View {
         switch viewModel.selectedSection {
+        case .overview:
+            OverviewView(viewModel: viewModel)
         case .watchlist:
-            WatchlistEditorView(viewModel: viewModel)
-        case .apiKeys:
-            APIKeysView(viewModel: viewModel)
+            WatchlistView(viewModel: viewModel)
+        case .saver:
+            ScreenSaverSettingsView(viewModel: viewModel)
         }
     }
 
     private var footer: some View {
-        HStack {
+        HStack(spacing: 12) {
+            Image(systemName: "paintpalette")
+                .foregroundStyle(.secondary)
             Text(viewModel.statusMessage)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                .lineLimit(2)
-
+                .lineLimit(1)
             Spacer()
-
             Button("Apply") {
-                viewModel.applyChanges()
+                viewModel.performAction("Apply")
             }
             .keyboardShortcut(.defaultAction)
         }
-        .padding(16)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
     }
 }
 
-private struct WatchlistEditorView: View {
+private struct OverviewView: View {
     @ObservedObject var viewModel: WatchlistViewModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Watchlist")
-                    .font(.headline)
-                Text("Search and manage symbols shown in the screen saver dropdown.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+        HStack(spacing: 20) {
+            VStack(alignment: .leading, spacing: 18) {
+                HeaderBlock(
+                    title: "Market Dashboard",
+                    subtitle: "Monitor the selected symbol and screen saver presentation."
+                )
 
-            HStack(spacing: 8) {
-                TextField("005930", text: $viewModel.inputSymbol)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit {
-                        viewModel.addSymbol()
+                PreviewCard(quote: viewModel.selectedQuote, series: viewModel.selectedSeries)
+
+                HStack(spacing: 10) {
+                    CommandButton(title: "Preview Saver", systemImage: "play.rectangle") {
+                        viewModel.performAction("Preview Saver")
                     }
-
-                Button("Add") {
-                    viewModel.addSymbol()
-                }
-
-                Button("Search") {
-                    viewModel.searchSymbols()
-                }
-            }
-
-            if !viewModel.searchResults.isEmpty {
-                Menu("Search Results") {
-                    ForEach(viewModel.searchResults, id: \.symbol) { result in
-                        Button(result.displayTitle) {
-                            viewModel.addSearchResult(result)
-                        }
+                    CommandButton(title: "Arrange Layout", systemImage: "square.grid.2x2") {
+                        viewModel.performAction("Arrange Layout")
+                    }
+                    CommandButton(title: "Export Snapshot", systemImage: "square.and.arrow.down") {
+                        viewModel.performAction("Export Snapshot")
                     }
                 }
             }
 
-            List {
+            VStack(alignment: .leading, spacing: 14) {
+                HeaderBlock(title: "Watchlist", subtitle: "Symbols available for the screen saver.")
+
                 ForEach(viewModel.symbols, id: \.self) { symbol in
-                    Text(symbol)
-                        .font(.body.monospacedDigit())
+                    SymbolRow(
+                        quote: MarketDataCatalog.quote(for: symbol),
+                        isSelected: symbol == viewModel.selectedSymbol
+                    ) {
+                        viewModel.selectSymbol(symbol)
+                    }
                 }
-                .onDelete(perform: viewModel.removeSymbols)
+
+                Spacer()
             }
+            .frame(width: 250)
+        }
+        .padding(28)
+    }
+}
+
+private struct WatchlistView: View {
+    @ObservedObject var viewModel: WatchlistViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HeaderBlock(title: "Watchlist", subtitle: "Manage the symbols shown in the screen saver.")
+
+            HStack(spacing: 10) {
+                CommandButton(title: "Add Symbol", systemImage: "plus") {
+                    viewModel.performAction("Add Symbol")
+                }
+                CommandButton(title: "Remove", systemImage: "minus") {
+                    viewModel.performAction("Remove")
+                }
+                CommandButton(title: "Reorder", systemImage: "arrow.up.arrow.down") {
+                    viewModel.performAction("Reorder")
+                }
+                Spacer()
+                CommandButton(title: "Import List", systemImage: "tray.and.arrow.down") {
+                    viewModel.performAction("Import List")
+                }
+            }
+
+            List(viewModel.symbols, id: \.self, selection: $viewModel.selectedSymbol) { symbol in
+                SymbolRow(
+                    quote: MarketDataCatalog.quote(for: symbol),
+                    isSelected: symbol == viewModel.selectedSymbol
+                ) {
+                    viewModel.selectSymbol(symbol)
+                }
+                .padding(.vertical, 3)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 8))
 
             HStack {
-                Button("Add Demo Set") {
-                    viewModel.addDemoSet()
+                Text("\(viewModel.symbols.count) symbols")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Save Selection") {
+                    viewModel.selectSymbol(viewModel.selectedSymbol)
+                }
+            }
+        }
+        .padding(28)
+    }
+}
+
+private struct ScreenSaverSettingsView: View {
+    @ObservedObject var viewModel: WatchlistViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HeaderBlock(title: "Screen Saver", subtitle: "Choose how the selected symbol appears on screen.")
+
+            PreviewCard(quote: viewModel.selectedQuote, series: viewModel.selectedSeries)
+                .frame(height: 300)
+
+            HStack(spacing: 10) {
+                Picker("Display", selection: $viewModel.selectedSymbol) {
+                    ForEach(viewModel.symbols, id: \.self) { symbol in
+                        Text(symbol).tag(symbol)
+                    }
+                }
+                .frame(width: 180)
+                .onChange(of: viewModel.selectedSymbol) { symbol in
+                    viewModel.selectSymbol(symbol)
+                }
+
+                CommandButton(title: "Dim Mode", systemImage: "moon") {
+                    viewModel.performAction("Dim Mode")
+                }
+                CommandButton(title: "Chart Style", systemImage: "chart.xyaxis.line") {
+                    viewModel.performAction("Chart Style")
+                }
+                CommandButton(title: "Install Saver", systemImage: "display.and.arrow.down") {
+                    viewModel.performAction("Install Saver")
+                }
+            }
+        }
+        .padding(28)
+    }
+}
+
+private struct HeaderBlock: View {
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.title3.weight(.semibold))
+            Text(subtitle)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct CommandButton: View {
+    let title: String
+    let systemImage: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+        }
+    }
+}
+
+private struct SymbolRow: View {
+    let quote: StockQuote
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(quote.symbol)
+                        .font(.body.monospacedDigit().weight(.semibold))
+                    Text("Market status")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Spacer()
 
-                Text("\(viewModel.symbols.count) symbol(s)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(24)
-    }
-}
-
-private struct APIKeysView: View {
-    @ObservedObject var viewModel: WatchlistViewModel
-
-    var body: some View {
-        Form {
-            Section {
-                SecureField("Paste App Key", text: $viewModel.appKey)
-                SecureField("Paste App Secret", text: $viewModel.appSecret)
-
-                HStack {
-                    Button("Clear Key") {
-                        viewModel.clearCredentials()
-                    }
-
-                    Button("Refresh Saved") {
-                        viewModel.refreshSavedCredentials()
-                    }
-
-                    Button(viewModel.isShowingSavedCredentials ? "Hide Saved" : "Reveal Saved") {
-                        viewModel.isShowingSavedCredentials.toggle()
-                    }
+                VStack(alignment: .trailing, spacing: 3) {
+                    Text(quote.priceText)
+                        .font(.body.monospacedDigit())
+                    Text(quote.changePercentText)
+                        .font(.caption.monospacedDigit().weight(.semibold))
+                        .foregroundStyle(quote.changePercent >= 0 ? .red : .blue)
                 }
-            } header: {
-                Text("Korea Investment Open API")
-            } footer: {
-                Text("Credentials are stored in Keychain. Leave either field empty and apply to use demo data.")
-            }
 
-            Section("Saved in Keychain") {
-                CredentialPreviewRow(title: "App Key", value: viewModel.savedAppKeyPreview)
-                CredentialPreviewRow(title: "App Secret", value: viewModel.savedAppSecretPreview)
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
             }
+            .contentShape(Rectangle())
         }
-        .formStyle(.grouped)
-        .padding(24)
+        .buttonStyle(.plain)
     }
 }
 
-private struct CredentialPreviewRow: View {
-    let title: String
-    let value: String
+private struct PreviewCard: View {
+    let quote: StockQuote
+    let series: StockChartSeries
 
     var body: some View {
-        HStack {
-            Text(title)
-            Spacer()
-            Text(value)
-                .font(.body.monospaced())
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
+        ZStack {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.black)
+
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(quote.symbol)
+                            .font(.system(size: 30, weight: .semibold))
+                            .foregroundStyle(.white)
+                        Text(quote.priceText)
+                            .font(.system(size: 58, weight: .bold))
+                            .foregroundStyle(.white)
+                            .monospacedDigit()
+                        Text(quote.changePercentText)
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(quote.changePercent >= 0 ? .red : .blue)
+                    }
+                    Spacer()
+                    Text("KRX")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.white.opacity(0.7))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(.white.opacity(0.12), in: Capsule())
+                }
+
+                MiniLineChart(series: series, lineColor: quote.changePercent >= 0 ? .red : .blue)
+            }
+            .padding(26)
+        }
+        .frame(minHeight: 260)
+    }
+}
+
+private struct MiniLineChart: View {
+    let series: StockChartSeries
+    let lineColor: Color
+
+    var body: some View {
+        GeometryReader { proxy in
+            let points = normalizedPoints(in: proxy.size)
+            Path { path in
+                guard let firstPoint = points.first else { return }
+                path.move(to: firstPoint)
+                for point in points.dropFirst() {
+                    path.addLine(to: point)
+                }
+            }
+            .stroke(lineColor, style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
+        }
+        .frame(minHeight: 90)
+    }
+
+    private func normalizedPoints(in size: CGSize) -> [CGPoint] {
+        let values = series.points.map { NSDecimalNumber(decimal: $0.close).doubleValue }
+        guard values.count > 1,
+              let minValue = values.min(),
+              let maxValue = values.max() else {
+            return []
+        }
+
+        let range = max(maxValue - minValue, 1)
+        return values.enumerated().map { index, value in
+            let x = CGFloat(index) / CGFloat(values.count - 1) * size.width
+            let yRatio = (value - minValue) / range
+            let y = size.height - CGFloat(yRatio) * size.height
+            return CGPoint(x: x, y: y)
         }
     }
 }

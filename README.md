@@ -1,12 +1,12 @@
 # ScreenStocker
 
-macOS용 서드파티 화면보호기 실험 프로젝트입니다. Aerial의 구조를 참고하되, 첫 버전은 주식 시세를 Core Animation 텍스트 레이어로 표시하는 작은 `.saver` 번들로 시작합니다.
+macOS용 서드파티 화면보호기 프로젝트입니다. 관리 앱에서 관심 종목을 고르고, 화면보호기에서 선택한 종목의 가격 상태와 차트를 표시합니다.
 
 ## 기본 구조
 
 - `ScreenStocker/Sources/ScreenSaver`: macOS ScreenSaver 진입점
 - `ScreenStocker/Sources/Rendering`: 화면 렌더링 계층
-- `ScreenStocker/Sources/Stocks`: 주식 시세 모델과 공급자 계층
+- `ScreenStocker/Sources/Stocks`: 주식 시세 모델과 시장 데이터
 - `ScreenStocker/Sources/Preferences`: 설정 저장과 configure sheet
 - `ScreenStocker/Resources`: `.saver` 번들용 `Info.plist`
 - `ScreenStockerApp`: 관심 종목 목록을 관리하는 macOS 앱
@@ -28,15 +28,13 @@ brew install xcodegen
 ./Scripts/build.sh --refresh
 ```
 
-관심 종목 목록은 관리 앱에서 추가/삭제합니다.
+관리 앱에서 관심 종목과 화면보호기 표시 옵션을 관리합니다.
 
 ```sh
 open "$HOME/Applications/ScreenStocker.app"
 ```
 
-관리 앱에서 한국투자증권 Open API App Key와 App Secret을 저장하면 화면보호기가 KIS Developers REST API로 국내 주식 현재가를 조회합니다. 관심 종목 입력창에는 `005930` 같은 6자리 종목코드를 넣고 `Search`를 눌러 종목명을 확인한 뒤 추가할 수 있습니다. 인증 정보가 비어 있거나 네트워크 응답이 실패하면 개발용 데모 시세로 표시됩니다.
-
-화면보호기 설정 창에서는 문자열을 직접 입력하지 않고, 관리 앱에 등록된 첫 종목 또는 개별 종목을 드롭다운 메뉴에서 선택합니다. 화면보호기는 한 번에 한 종목의 현재가와 한국투자증권 국내주식 기간별 시세 기반 라인 차트를 화면 전체에 표시합니다.
+화면보호기 설정 창에서는 관리 앱을 바로 열 수 있습니다. 표시할 종목 선택과 관심 종목 관리는 `ScreenStocker.app`에서 수행하며, 화면보호기는 앱에서 선택한 한 종목의 현재가와 라인 차트를 화면 전체에 표시합니다.
 
 설치 후 macOS 설정에서 바로 확인할 수 있습니다.
 

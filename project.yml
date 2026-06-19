@@ -21,9 +21,7 @@ targets:
       - path: ScreenStocker/Resources
     dependencies:
       - sdk: AppKit.framework
-      - sdk: Charts.framework
       - sdk: ScreenSaver.framework
-      - sdk: Security.framework
       - sdk: SwiftUI.framework
     settings:
       base:
@@ -46,7 +44,6 @@ targets:
     dependencies:
       - sdk: AppKit.framework
       - sdk: ScreenSaver.framework
-      - sdk: Security.framework
       - sdk: SwiftUI.framework
     settings:
       base:
@@ -62,6 +59,9 @@ targets:
     sources:
       - path: Tests/ScreenStockerTests
       - path: ScreenStocker/Sources/Stocks
+      - path: ScreenStocker/Sources/Preferences
+    dependencies:
+      - sdk: ScreenSaver.framework
     settings:
       base:
         GENERATE_INFOPLIST_FILE: "YES"

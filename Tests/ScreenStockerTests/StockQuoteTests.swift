@@ -1,82 +1,27 @@
 import XCTest
 
 final class StockQuoteTests: XCTestCase {
-    func testDemoProviderReturnsConfiguredSymbols() {
-        let provider = DemoStockQuoteProvider(symbols: ["005930", "000660"])
-        let expectation = expectation(description: "quotes")
+    func testMarketDataReturnsSelectedQuote() {
+        let quote = MarketDataCatalog.quote(for: "000660")
 
-        provider.fetchQuotes { quotes in
-            XCTAssertEqual(quotes.map(\.symbol), ["005930", "000660"])
-            expectation.fulfill()
-        }
-
-        wait(for: [expectation], timeout: 1)
+        XCTAssertEqual(quote.symbol, "000660")
+        XCTAssertEqual(quote.changePercent, Decimal(string: "-0.82")!)
     }
 
-    func testKoreaInvestmentProviderDecodesQuote() throws {
-        let data = try XCTUnwrap("""
-        {
-          "rt_cd": "0",
-          "output": {
-            "stck_prpr": "70000",
-            "prdy_ctrt": "1.24",
-            "hts_kor_isnm": "Samsung Electronics"
-          }
-        }
-        """.data(using: .utf8))
+    func testMarketChartSeriesUsesSelectedSymbol() {
+        let series = MarketDataCatalog.chartSeries(for: "035420")
 
-        let quote = KoreaInvestmentQuoteProvider.decodeQuote(from: data, requestedSymbol: "005930")
-
-        XCTAssertEqual(quote, StockQuote(symbol: "005930", price: Decimal(string: "70000")!, changePercent: Decimal(string: "1.24")!))
+        XCTAssertEqual(series.symbol, "035420")
+        XCTAssertGreaterThan(series.points.count, 2)
+        XCTAssertNotNil(series.highClose)
+        XCTAssertNotNil(series.lowClose)
     }
 
-    func testKoreaInvestmentSymbolSearchDecodesQuoteName() throws {
-        let data = try XCTUnwrap("""
-        {
-          "rt_cd": "0",
-          "output": {
-            "stck_prpr": "70000",
-            "prdy_ctrt": "1.24",
-            "hts_kor_isnm": "Samsung Electronics"
-          }
-        }
-        """.data(using: .utf8))
+    func testPreferencesFallBackToDefaultSymbols() {
+        let defaults = UserDefaults(suiteName: "com.lukeoh.ScreenStocker.tests.\(UUID().uuidString)")!
+        let preferences = StockerPreferences(defaults: defaults)
 
-        let result = KoreaInvestmentSymbolSearchProvider.decodeSearchResult(from: data, requestedSymbol: "005930")
-
-        XCTAssertEqual(
-            result,
-            StockSymbolSearchResult(
-                symbol: "005930",
-                name: "Samsung Electronics",
-                exchange: "KRX",
-                country: "KR",
-                currency: "KRW",
-                type: nil
-            )
-        )
-    }
-
-    func testKoreaInvestmentProviderDecodesTimeSeriesInChronologicalOrder() throws {
-        let data = try XCTUnwrap("""
-        {
-          "rt_cd": "0",
-          "output2": [
-            {
-              "stck_bsop_date": "20260508",
-              "stck_clpr": "70500"
-            },
-            {
-              "stck_bsop_date": "20260507",
-              "stck_clpr": "69800"
-            }
-          ]
-        }
-        """.data(using: .utf8))
-
-        let series = try XCTUnwrap(KoreaInvestmentTimeSeriesProvider.decodeTimeSeries(from: data, requestedSymbol: "005930"))
-
-        XCTAssertEqual(series.symbol, "005930")
-        XCTAssertEqual(series.points.map(\.close), [Decimal(string: "69800")!, Decimal(string: "70500")!])
+        XCTAssertEqual(preferences.registeredSymbols, MarketDataCatalog.symbols)
+        XCTAssertEqual(preferences.symbolForScreenSaverDisplay, MarketDataCatalog.symbols.first)
     }
 }

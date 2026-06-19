@@ -1,12 +1,10 @@
 import Foundation
 import ScreenSaver
-import Security
 import Darwin
 
 final class StockerPreferences {
     static let didChangeNotification = Notification.Name("com.lukeoh.ScreenStocker.preferencesChanged")
-    static let fallbackSymbol = "005930"
-    static let demoSymbols = ["005930", "000660", "035420", "005380"]
+    static let defaultSymbols = MarketDataCatalog.symbols
 
     private enum Key {
         static let registeredSymbols = "registeredSymbols"
@@ -21,7 +19,6 @@ final class StockerPreferences {
 
     private let defaults: UserDefaults
     private let legacyDefaults = ScreenSaverDefaults(forModuleWithName: StockerPreferences.legacyModuleName)
-    private let credentialStore = KoreaInvestmentCredentialStore()
 
     init(defaults: UserDefaults? = UserDefaults(suiteName: StockerPreferences.suiteName)) {
         self.defaults = defaults ?? .standard
@@ -30,23 +27,8 @@ final class StockerPreferences {
         mirrorSharedPreferences()
     }
 
-    var symbols: [String] {
-        get {
-            if let selectedSymbol {
-                return [selectedSymbol]
-            }
-            return registeredSymbols
-        }
-        set {
-            registeredSymbols = newValue
-        }
-    }
-
     var symbolForScreenSaverDisplay: String? {
-        if let selectedSymbol {
-            return selectedSymbol
-        }
-        return registeredSymbols.first
+        selectedSymbol ?? registeredSymbols.first ?? Self.defaultSymbols.first
     }
 
     var registeredSymbols: [String] {
@@ -56,13 +38,10 @@ final class StockerPreferences {
                 ?? Self.hostPreferenceString(forKey: Key.legacySymbols)
                 ?? defaults.string(forKey: Key.registeredSymbols)
                 ?? defaults.string(forKey: Key.legacySymbols) else {
-                return []
+                return Self.defaultSymbols
             }
             let symbols = normalize(symbols: stored.split(separator: ",").map(String.init))
-            if defaults.object(forKey: Key.watchlistSaved) == nil, symbols == Self.demoSymbols {
-                return []
-            }
-            return symbols
+            return symbols.isEmpty ? Self.defaultSymbols : symbols
         }
         set {
             defaults.set(normalize(symbols: newValue).joined(separator: ","), forKey: Key.registeredSymbols)
@@ -98,42 +77,6 @@ final class StockerPreferences {
         }
     }
 
-    var koreaInvestmentAppKey: String {
-        get {
-            credentialStore.read(account: .appKey)
-        }
-        set {
-            try? saveKoreaInvestmentCredentials(appKey: newValue, appSecret: koreaInvestmentAppSecret)
-        }
-    }
-
-    var koreaInvestmentAppSecret: String {
-        get {
-            credentialStore.read(account: .appSecret)
-        }
-        set {
-            try? saveKoreaInvestmentCredentials(appKey: koreaInvestmentAppKey, appSecret: newValue)
-        }
-    }
-
-    var koreaInvestmentCredentials: KoreaInvestmentCredentials {
-        KoreaInvestmentCredentials(appKey: koreaInvestmentAppKey, appSecret: koreaInvestmentAppSecret)
-    }
-
-    func saveKoreaInvestmentCredentials(appKey: String, appSecret: String) throws {
-        let credentials = KoreaInvestmentCredentials(appKey: appKey, appSecret: appSecret)
-        try credentialStore.save(credentials.appKey, account: .appKey)
-        try credentialStore.save(credentials.appSecret, account: .appSecret)
-
-        let storedCredentials = koreaInvestmentCredentials
-        guard storedCredentials == credentials else {
-            throw CredentialStoreError.verificationFailed
-        }
-
-        syncDefaults()
-        notifyChanged()
-    }
-
     private func migrateLegacyDefaultsIfNeeded() {
         syncDefaults()
 
@@ -141,10 +84,8 @@ final class StockerPreferences {
             let legacySymbols = legacyDefaults?.string(forKey: Key.registeredSymbols)
                 ?? legacyDefaults?.string(forKey: Key.legacySymbols)
             let migratedSymbols = normalize(symbols: legacySymbols?.split(separator: ",").map(String.init) ?? [])
-            if !migratedSymbols.isEmpty {
-                defaults.set(migratedSymbols.joined(separator: ","), forKey: Key.registeredSymbols)
-                defaults.set(true, forKey: Key.watchlistSaved)
-            }
+            defaults.set((migratedSymbols.isEmpty ? Self.defaultSymbols : migratedSymbols).joined(separator: ","), forKey: Key.registeredSymbols)
+            defaults.set(true, forKey: Key.watchlistSaved)
         }
 
         if defaults.object(forKey: Key.selectedSymbol) == nil,
@@ -160,8 +101,7 @@ final class StockerPreferences {
         let repairedSymbols = symbols.joined(separator: ",")
         var didRepair = false
 
-        if let storedSymbols = defaults.string(forKey: Key.registeredSymbols),
-           storedSymbols != repairedSymbols {
+        if defaults.string(forKey: Key.registeredSymbols) != repairedSymbols {
             defaults.set(repairedSymbols, forKey: Key.registeredSymbols)
             didRepair = true
         }
@@ -312,83 +252,5 @@ final class StockerPreferences {
             )
             try data.write(to: url, options: .atomic)
         } catch {}
-    }
-
-    private final class KoreaInvestmentCredentialStore {
-        enum Account: String {
-            case appKey
-            case appSecret
-        }
-
-        private let service = "com.lukeoh.ScreenStocker.koreainvestment"
-
-        func read(account: Account) -> String {
-            var query = baseQuery(account: account)
-            query[kSecReturnData as String] = true
-            query[kSecMatchLimit as String] = kSecMatchLimitOne
-
-            var item: CFTypeRef?
-            let status = SecItemCopyMatching(query as CFDictionary, &item)
-            guard status == errSecSuccess,
-                  let data = item as? Data,
-                  let value = String(data: data, encoding: .utf8) else {
-                return ""
-            }
-            return value.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-
-        func save(_ value: String, account: Account) throws {
-            let credential = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !credential.isEmpty else {
-                let status = SecItemDelete(baseQuery(account: account) as CFDictionary)
-                guard status == errSecSuccess || status == errSecItemNotFound else {
-                    throw CredentialStoreError.keychainStatus(status)
-                }
-                return
-            }
-
-            let data = Data(credential.utf8)
-            let attributes = [kSecValueData as String: data]
-            let status = SecItemUpdate(baseQuery(account: account) as CFDictionary, attributes as CFDictionary)
-            switch status {
-            case errSecSuccess:
-                return
-            case errSecItemNotFound:
-                var item = baseQuery(account: account)
-                item[kSecValueData as String] = data
-                item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-                let addStatus = SecItemAdd(item as CFDictionary, nil)
-                guard addStatus == errSecSuccess else {
-                    throw CredentialStoreError.keychainStatus(addStatus)
-                }
-            default:
-                throw CredentialStoreError.keychainStatus(status)
-            }
-        }
-
-        private func baseQuery(account: Account) -> [String: Any] {
-            [
-                kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: service,
-                kSecAttrAccount as String: account.rawValue
-            ]
-        }
-    }
-}
-
-private enum CredentialStoreError: LocalizedError {
-    case keychainStatus(OSStatus)
-    case verificationFailed
-
-    var errorDescription: String? {
-        switch self {
-        case .keychainStatus(let status):
-            if let message = SecCopyErrorMessageString(status, nil) as String? {
-                return "Keychain error \(status): \(message)"
-            }
-            return "Keychain error \(status)"
-        case .verificationFailed:
-            return "Saved credentials could not be verified in Keychain."
-        }
     }
 }

@@ -2,20 +2,16 @@ import AppKit
 import SwiftUI
 
 final class ConfigurationWindowController: NSWindowController {
-    private let preferences: StockerPreferences
-    private let viewModel: ScreenSaverConfigurationViewModel
+    private let viewModel = ScreenSaverConfigurationViewModel()
 
     init(preferences: StockerPreferences) {
-        self.preferences = preferences
-        self.viewModel = ScreenSaverConfigurationViewModel(preferences: preferences)
-
         let hostingController = NSHostingController(
             rootView: ScreenSaverConfigurationView(viewModel: viewModel)
         )
         let window = NSWindow(contentViewController: hostingController)
         window.title = "ScreenStocker Settings"
         window.styleMask = [.titled]
-        window.setContentSize(NSSize(width: 420, height: 180))
+        window.setContentSize(NSSize(width: 420, height: 190))
 
         super.init(window: window)
 
@@ -23,64 +19,52 @@ final class ConfigurationWindowController: NSWindowController {
             guard let window else { return }
             window.sheetParent?.endSheet(window)
         }
-
-        DistributedNotificationCenter.default().addObserver(
-            self,
-            selector: #selector(preferencesDidChange),
-            name: StockerPreferences.didChangeNotification,
-            object: nil
-        )
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
-    deinit {
-        DistributedNotificationCenter.default().removeObserver(self)
-    }
-
-    func reloadSymbols() {
-        viewModel.reload()
-    }
-
-    @objc private func preferencesDidChange() {
-        DispatchQueue.main.async { [weak self] in
-            self?.reloadSymbols()
-        }
-    }
+    func reloadSymbols() {}
 }
 
 @MainActor
 final class ScreenSaverConfigurationViewModel: ObservableObject {
-    @Published private(set) var symbols: [String] = []
-    @Published var selectedSymbol: String = ScreenSaverConfigurationViewModel.firstSymbolID
+    @Published var statusMessage = ""
     var onDone: (() -> Void)?
 
-    private static let firstSymbolID = "__first__"
-    private let preferences: StockerPreferences
-
-    init(preferences: StockerPreferences) {
-        self.preferences = preferences
-        reload()
+    func openManagementApp() {
+        if let appURL = Self.managementAppURL() {
+            NSWorkspace.shared.openApplication(at: appURL, configuration: NSWorkspace.OpenConfiguration()) { [weak self] _, error in
+                DispatchQueue.main.async {
+                    if let error {
+                        self?.statusMessage = "Could not open ScreenStocker: \(error.localizedDescription)"
+                    } else {
+                        self?.statusMessage = "ScreenStocker opened."
+                    }
+                }
+            }
+        } else {
+            statusMessage = "ScreenStocker app is not installed in Applications."
+        }
     }
 
-    var isWatchlistEmpty: Bool {
-        symbols.isEmpty
-    }
-
-    var firstSymbolID: String {
-        Self.firstSymbolID
-    }
-
-    func reload() {
-        symbols = preferences.registeredSymbols
-        selectedSymbol = preferences.selectedSymbol ?? Self.firstSymbolID
-    }
-
-    func saveAndClose() {
-        preferences.selectedSymbol = selectedSymbol == Self.firstSymbolID ? nil : selectedSymbol
+    func close() {
         onDone?()
+    }
+
+    private static func managementAppURL() -> URL? {
+        if let bundleURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.lukeoh.ScreenStockerApp") {
+            return bundleURL
+        }
+
+        let applicationURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Applications", isDirectory: true)
+            .appendingPathComponent("ScreenStocker.app", isDirectory: true)
+        guard FileManager.default.fileExists(atPath: applicationURL.path) else {
+            return nil
+        }
+        return applicationURL
     }
 }
 
@@ -88,36 +72,40 @@ private struct ScreenSaverConfigurationView: View {
     @ObservedObject var viewModel: ScreenSaverConfigurationViewModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text("Display Symbol")
+        VStack(alignment: .leading, spacing: 12) {
+            Text("ScreenStocker")
                 .font(.headline)
 
-            Picker("Display", selection: $viewModel.selectedSymbol) {
-                Text("First watchlist symbol").tag(viewModel.firstSymbolID)
-                ForEach(viewModel.symbols, id: \.self) { symbol in
-                    Text(symbol).tag(symbol)
-                }
-            }
-            .labelsHidden()
-            .disabled(viewModel.isWatchlistEmpty)
+            Text("Choose the displayed symbol and manage the watchlist in the ScreenStocker app.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
-            if viewModel.isWatchlistEmpty {
-                Text("No registered symbols. Open ScreenStocker to add symbols.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            Button {
+                viewModel.openManagementApp()
+            } label: {
+                Label("Open ScreenStocker", systemImage: "arrow.up.forward.app")
             }
 
-            Spacer()
+            Text(viewModel.statusMessage.isEmpty ? " " : viewModel.statusMessage)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .frame(minHeight: 20, alignment: .topLeading)
 
             HStack {
                 Spacer()
                 Button("Done") {
-                    viewModel.saveAndClose()
+                    viewModel.close()
                 }
                 .keyboardShortcut(.defaultAction)
             }
+            .padding(.top, -4)
         }
-        .padding(24)
-        .frame(width: 420, height: 180)
+        .padding(.horizontal, 24)
+        .padding(.top, 18)
+        .padding(.bottom, 22)
+        .frame(width: 420)
+        .frame(height: 190, alignment: .top)
     }
 }
