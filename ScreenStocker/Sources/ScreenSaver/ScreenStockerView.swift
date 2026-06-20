@@ -5,7 +5,11 @@ import ScreenSaver
 final class ScreenStockerView: ScreenSaverView {
     private let preferences = StockerPreferences()
     private let renderer = StockTickerRenderer()
+    private let marketDataClient = TossInvestMarketDataClient()
     private var configurationController: ConfigurationWindowController?
+    private var refreshTask: Task<Void, Never>?
+
+    private static let refreshInterval: UInt64 = 300_000_000_000
 
     override init?(frame: NSRect, isPreview: Bool) {
         super.init(frame: frame, isPreview: isPreview)
@@ -36,7 +40,19 @@ final class ScreenStockerView: ScreenSaverView {
     }
 
     deinit {
+        refreshTask?.cancel()
         DistributedNotificationCenter.default().removeObserver(self)
+    }
+
+    override func startAnimation() {
+        super.startAnimation()
+        startMarketDataRefresh()
+    }
+
+    override func stopAnimation() {
+        refreshTask?.cancel()
+        refreshTask = nil
+        super.stopAnimation()
     }
 
     override var hasConfigureSheet: Bool {
@@ -60,7 +76,44 @@ final class ScreenStockerView: ScreenSaverView {
                 appearanceMode: self.preferences.appearanceMode,
                 chartStyle: self.preferences.chartStyle
             )
+            self.startMarketDataRefresh()
         }
+    }
+
+    private func startMarketDataRefresh() {
+        refreshTask?.cancel()
+
+        guard let symbol = preferences.symbolForScreenSaverDisplay else {
+            return
+        }
+
+        refreshTask = Task { [weak self] in
+            await self?.runMarketDataRefreshLoop(symbol: symbol)
+        }
+    }
+
+    @MainActor
+    private func runMarketDataRefreshLoop(symbol: String) async {
+        while !Task.isCancelled {
+            await refreshMarketData(symbol: symbol)
+
+            do {
+                try await Task.sleep(nanoseconds: Self.refreshInterval)
+            } catch {
+                return
+            }
+        }
+    }
+
+    @MainActor
+    private func refreshMarketData(symbol: String) async {
+        do {
+            let snapshot = try await marketDataClient.snapshot(for: symbol)
+            guard !Task.isCancelled else {
+                return
+            }
+            renderer.update(snapshot: snapshot)
+        } catch {}
     }
 
     private func backgroundColor(for appearanceMode: ScreenSaverAppearanceMode) -> NSColor {

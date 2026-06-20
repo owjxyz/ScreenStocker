@@ -8,20 +8,47 @@ enum StockChartGeometry {
         let control2: CGPoint
     }
 
+    struct CandlePoint: Equatable {
+        let x: CGFloat
+        let openY: CGFloat
+        let highY: CGFloat
+        let lowY: CGFloat
+        let closeY: CGFloat
+    }
+
     static func normalizedPoints(for series: StockChartSeries, in size: CGSize) -> [CGPoint] {
-        let values = series.points.map { NSDecimalNumber(decimal: $0.close).doubleValue }
-        guard values.count > 1,
-              let minValue = values.min(),
-              let maxValue = values.max() else {
+        let range = priceRange(for: series)
+        guard series.points.count > 1,
+              let minValue = range.min,
+              let maxValue = range.max else {
             return []
         }
 
-        let range = max(maxValue - minValue, 1)
-        return values.enumerated().map { index, value in
-            let x = CGFloat(index) / CGFloat(values.count - 1) * size.width
-            let yRatio = (value - minValue) / range
+        return series.points.enumerated().map { index, point in
+            let x = CGFloat(index) / CGFloat(series.points.count - 1) * size.width
+            let value = NSDecimalNumber(decimal: point.close).doubleValue
+            let yRatio = (value - minValue) / max(maxValue - minValue, 1)
             let y = size.height - CGFloat(yRatio) * size.height
             return CGPoint(x: x, y: y)
+        }
+    }
+
+    static func normalizedCandles(for series: StockChartSeries, in size: CGSize) -> [CandlePoint] {
+        let range = priceRange(for: series)
+        guard series.points.count > 1,
+              let minValue = range.min,
+              let maxValue = range.max else {
+            return []
+        }
+
+        return series.points.enumerated().map { index, point in
+            CandlePoint(
+                x: CGFloat(index) / CGFloat(series.points.count - 1) * size.width,
+                openY: yPosition(for: point.open, minValue: minValue, maxValue: maxValue, height: size.height),
+                highY: yPosition(for: point.high, minValue: minValue, maxValue: maxValue, height: size.height),
+                lowY: yPosition(for: point.low, minValue: minValue, maxValue: maxValue, height: size.height),
+                closeY: yPosition(for: point.close, minValue: minValue, maxValue: maxValue, height: size.height)
+            )
         }
     }
 
@@ -47,5 +74,17 @@ enum StockChartGeometry {
 
             return CurveSegment(end: current, control1: control1, control2: control2)
         }
+    }
+
+    private static func priceRange(for series: StockChartSeries) -> (min: Double?, max: Double?) {
+        let lows = series.points.map { NSDecimalNumber(decimal: $0.low).doubleValue }
+        let highs = series.points.map { NSDecimalNumber(decimal: $0.high).doubleValue }
+        return (lows.min(), highs.max())
+    }
+
+    private static func yPosition(for value: Decimal, minValue: Double, maxValue: Double, height: CGFloat) -> CGFloat {
+        let doubleValue = NSDecimalNumber(decimal: value).doubleValue
+        let yRatio = (doubleValue - minValue) / max(maxValue - minValue, 1)
+        return height - CGFloat(yRatio) * height
     }
 }

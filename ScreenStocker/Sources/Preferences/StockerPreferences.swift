@@ -254,8 +254,7 @@ final class StockerPreferences {
     private func normalize(symbols: [String]) -> [String] {
         var seen = Set<String>()
         return symbols.compactMap { symbol in
-            let normalized = symbol.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-            guard !normalized.isEmpty,
+            guard let normalized = StockSymbolInput.normalizedSymbol(from: symbol),
                   !Self.invalidSymbols.contains(normalized),
                   !seen.contains(normalized) else { return nil }
             seen.insert(normalized)

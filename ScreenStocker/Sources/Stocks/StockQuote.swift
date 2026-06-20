@@ -2,21 +2,43 @@ import Foundation
 
 struct StockQuote: Equatable {
     let symbol: String
-    let price: Decimal
-    let changePercent: Decimal
+    var displayName: String?
+    let price: Decimal?
+    let changePercent: Decimal?
+    var currency: String = "KRW"
+    var timestamp: Date?
+
+    var titleText: String {
+        let trimmedName = displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedName?.isEmpty == false ? trimmedName! : symbol
+    }
 
     var priceText: String {
-        Self.currencyText(for: price)
+        Self.currencyText(for: price, currency: currency)
     }
 
     var changePercentText: String {
-        "\(Self.percentFormatter.string(for: changePercent) ?? "\(changePercent)")%"
+        guard let changePercent else { return "-" }
+        return "\(Self.percentFormatter.string(for: changePercent) ?? "\(changePercent)")%"
     }
 
     private static let decimalFormatter: NumberFormatter = {
         let formatter = NumberFormatter()
+        formatter.usesGroupingSeparator = true
+        formatter.groupingSeparator = ","
+        formatter.groupingSize = 3
         formatter.minimumFractionDigits = 2
         formatter.maximumFractionDigits = 2
+        return formatter
+    }()
+
+    private static let krwFormatter: NumberFormatter = {
+        let formatter = NumberFormatter()
+        formatter.usesGroupingSeparator = true
+        formatter.groupingSeparator = ","
+        formatter.groupingSize = 3
+        formatter.minimumFractionDigits = 0
+        formatter.maximumFractionDigits = 0
         return formatter
     }()
 
@@ -27,8 +49,16 @@ struct StockQuote: Equatable {
         return formatter
     }()
 
-    static func currencyText(for value: Decimal) -> String {
-        "₩\(decimalFormatter.string(for: value) ?? "\(value)")"
+    static func currencyText(for value: Decimal?, currency: String = "KRW") -> String {
+        guard let value else { return "-" }
+        let normalizedCurrency = currency.uppercased()
+        let symbol = normalizedCurrency == "USD" ? "$" : "₩"
+        let formatter = normalizedCurrency == "KRW" ? krwFormatter : decimalFormatter
+        return "\(symbol)\(formatter.string(for: value) ?? "\(value)")"
+    }
+
+    static func placeholder(symbol: String?) -> StockQuote {
+        StockQuote(symbol: symbol ?? "-", displayName: nil, price: nil, changePercent: nil)
     }
 }
 

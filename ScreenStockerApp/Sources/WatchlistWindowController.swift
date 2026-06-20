@@ -52,6 +52,7 @@ final class WatchlistViewModel: ObservableObject {
         case overview = "Overview"
         case watchlist = "Watchlist"
         case saver = "Screen Saver"
+        case api = "API"
 
         var id: String { rawValue }
 
@@ -63,6 +64,8 @@ final class WatchlistViewModel: ObservableObject {
                 return "star"
             case .saver:
                 return "display"
+            case .api:
+                return "key"
             }
         }
     }
@@ -71,12 +74,31 @@ final class WatchlistViewModel: ObservableObject {
     @Published var selectedSymbol: String
     @Published var appearanceMode: ScreenSaverAppearanceMode
     @Published var chartStyle: ScreenSaverChartStyle
+    @Published var tossAPIKey: String
+    @Published var tossSecretKey: String
+    @Published var hasTossCredentials: Bool
+    @Published var marketSnapshots: [String: StockMarketSnapshot] = [:]
+    @Published var isRefreshingMarketData = false
+    @Published var isRefreshingSelectedChart = false
+    @Published var isAddingSymbol = false
+    @Published var isReorderingSymbols = false
+    @Published var isAddSymbolSheetPresented = false
+    @Published var symbolToAdd = ""
+    @Published var addSymbolErrorMessage: String?
+    @Published var marketDataErrorMessage: String?
     @Published var statusMessage = "Ready."
 
-    let symbols: [String]
+    @Published private(set) var symbols: [String]
     private let preferences: StockerPreferences
+    private let credentialsStore = TossInvestCredentialsStore()
+    private let marketDataClient = TossInvestMarketDataClient()
     private let installer = ScreenSaverInstaller()
     private var chartStyleWindowController: ChartStyleWindowController?
+    private var selectedChartTask: Task<Void, Never>?
+
+    deinit {
+        selectedChartTask?.cancel()
+    }
 
     init(preferences: StockerPreferences) {
         self.preferences = preferences
@@ -84,25 +106,195 @@ final class WatchlistViewModel: ObservableObject {
         self.selectedSymbol = preferences.selectedSymbol ?? preferences.symbolForScreenSaverDisplay ?? MarketDataCatalog.symbols[0]
         self.appearanceMode = preferences.appearanceMode
         self.chartStyle = preferences.chartStyle
+        let credentials = credentialsStore.credentials
+        self.tossAPIKey = credentials?.apiKey ?? ""
+        self.tossSecretKey = credentials?.secretKey ?? ""
+        self.hasTossCredentials = credentials?.isComplete == true
         preferences.registeredSymbols = symbols
     }
 
     var selectedQuote: StockQuote {
-        MarketDataCatalog.quote(for: selectedSymbol)
+        quote(for: selectedSymbol)
     }
 
     var selectedSeries: StockChartSeries {
-        MarketDataCatalog.chartSeries(for: selectedSymbol)
+        series(for: selectedSymbol)
+    }
+
+    func quote(for symbol: String) -> StockQuote {
+        marketSnapshots[symbol]?.quote ?? StockQuote.placeholder(symbol: symbol)
+    }
+
+    func series(for symbol: String) -> StockChartSeries {
+        marketSnapshots[symbol]?.series ?? StockChartSeries(symbol: symbol, points: [])
     }
 
     func selectSymbol(_ symbol: String) {
         selectedSymbol = symbol
         preferences.selectedSymbol = symbol
         statusMessage = "\(symbol) selected for the screen saver."
+        scheduleSelectedChartRefresh()
     }
 
     func performAction(_ title: String) {
         statusMessage = "\(title) selected."
+    }
+
+    func openAddSymbolSheet() {
+        symbolToAdd = ""
+        addSymbolErrorMessage = nil
+        isAddSymbolSheetPresented = true
+        statusMessage = "Add Symbol selected."
+    }
+
+    func addSymbol() async {
+        guard !isAddingSymbol else { return }
+        guard let normalizedSymbol = StockSymbolInput.normalizedSymbol(from: symbolToAdd) else {
+            addSymbolErrorMessage = StockSymbolInput.validationMessage
+            return
+        }
+
+        guard !symbols.contains(normalizedSymbol) else {
+            addSymbolErrorMessage = "\(normalizedSymbol) is already in the watchlist."
+            return
+        }
+
+        isAddingSymbol = true
+        addSymbolErrorMessage = nil
+        statusMessage = "Checking \(normalizedSymbol)..."
+
+        do {
+            let stockInfo = try await marketDataClient.stockInfo(for: normalizedSymbol)
+            symbols.append(stockInfo.symbol)
+            preferences.registeredSymbols = symbols
+            selectSymbol(stockInfo.symbol)
+            isAddSymbolSheetPresented = false
+            symbolToAdd = ""
+            statusMessage = "\(stockInfo.displayTitle) added to the watchlist."
+
+            let quotes = try? await marketDataClient.quotes(for: [stockInfo.symbol])
+            if let quote = quotes?[stockInfo.symbol] {
+                marketSnapshots[stockInfo.symbol] = StockMarketSnapshot(
+                    quote: quote,
+                    series: StockChartSeries(symbol: stockInfo.symbol, points: [])
+                )
+            }
+        } catch {
+            addSymbolErrorMessage = error.localizedDescription
+            statusMessage = "Add Symbol failed: \(error.localizedDescription)"
+        }
+
+        isAddingSymbol = false
+    }
+
+    func removeSelectedSymbol() {
+        guard let index = symbols.firstIndex(of: selectedSymbol) else {
+            statusMessage = "Select a symbol to remove."
+            return
+        }
+
+        let removedSymbol = symbols.remove(at: index)
+        marketSnapshots[removedSymbol] = nil
+        preferences.registeredSymbols = symbols
+
+        if !symbols.isEmpty {
+            let nextIndex = min(index, symbols.count - 1)
+            let nextSymbol = symbols[nextIndex]
+            selectSymbol(nextSymbol)
+            statusMessage = "\(removedSymbol) removed from the watchlist."
+        } else {
+            preferences.selectedSymbol = nil
+            selectedSymbol = ""
+            statusMessage = "\(removedSymbol) removed. Add a symbol to use the screen saver."
+        }
+    }
+
+    func toggleReorderingSymbols() {
+        isReorderingSymbols.toggle()
+        statusMessage = isReorderingSymbols ? "Drag symbols to reorder the watchlist." : "Watchlist order saved."
+    }
+
+    func moveSymbols(from source: IndexSet, to destination: Int) {
+        symbols.move(fromOffsets: source, toOffset: destination)
+        preferences.registeredSymbols = symbols
+        statusMessage = "Watchlist order saved."
+    }
+
+    func refreshMarketData() async {
+        guard !isRefreshingMarketData else { return }
+        isRefreshingMarketData = true
+        statusMessage = "Refreshing market data..."
+
+        do {
+            let quotes = try await marketDataClient.quotes(for: symbols)
+            marketSnapshots = mergedSnapshots(with: quotes)
+            marketDataErrorMessage = nil
+            statusMessage = "Market data refreshed."
+            scheduleSelectedChartRefresh()
+        } catch {
+            marketDataErrorMessage = error.localizedDescription
+            statusMessage = "Market data refresh failed: \(error.localizedDescription)"
+        }
+
+        isRefreshingMarketData = false
+    }
+
+    private func scheduleSelectedChartRefresh() {
+        selectedChartTask?.cancel()
+
+        let symbol = selectedSymbol
+        guard !symbol.isEmpty else { return }
+
+        selectedChartTask = Task { [weak self] in
+            await self?.refreshSelectedChart(for: symbol)
+        }
+    }
+
+    private func refreshSelectedChart(for symbol: String) async {
+        isRefreshingSelectedChart = true
+        defer {
+            if selectedSymbol == symbol {
+                isRefreshingSelectedChart = false
+            }
+        }
+
+        do {
+            let snapshot = try await marketDataClient.snapshot(for: symbol)
+            guard !Task.isCancelled, selectedSymbol == symbol else { return }
+            marketSnapshots[symbol] = snapshot
+            marketDataErrorMessage = nil
+            statusMessage = "Selected symbol chart refreshed."
+        } catch {
+            guard !Task.isCancelled, selectedSymbol == symbol else { return }
+            marketDataErrorMessage = error.localizedDescription
+            statusMessage = "Selected symbol chart refresh failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func mergedSnapshots(with quotes: [String: StockQuote]) -> [String: StockMarketSnapshot] {
+        Dictionary(uniqueKeysWithValues: symbols.compactMap { symbol in
+            guard let quote = quotes[symbol] else {
+                return marketSnapshots[symbol].map { (symbol, $0) }
+            }
+
+            let existingSeries = marketSnapshots[symbol]?.series ?? StockChartSeries(symbol: symbol, points: [])
+            let changePercent = changePercent(price: quote.price, series: existingSeries)
+                ?? marketSnapshots[symbol]?.quote.changePercent
+            let mergedQuote = StockQuote(
+                symbol: quote.symbol,
+                displayName: quote.displayName,
+                price: quote.price,
+                changePercent: changePercent,
+                currency: quote.currency,
+                timestamp: quote.timestamp
+            )
+            return (symbol, StockMarketSnapshot(quote: mergedQuote, series: existingSeries))
+        })
+    }
+
+    private func changePercent(price: Decimal?, series: StockChartSeries) -> Decimal? {
+        guard let price, let baseline = series.openingPrice, baseline != 0 else { return nil }
+        return ((price - baseline) / baseline) * 100
     }
 
     func toggleAppearanceMode() {
@@ -159,6 +351,32 @@ final class WatchlistViewModel: ObservableObject {
             statusMessage = "Save failed: \(error.localizedDescription)"
         }
     }
+
+    func saveTossCredentials() {
+        do {
+            try credentialsStore.save(TossInvestCredentials(apiKey: tossAPIKey, secretKey: tossSecretKey))
+            let credentials = credentialsStore.credentials
+            tossAPIKey = credentials?.apiKey ?? ""
+            tossSecretKey = credentials?.secretKey ?? ""
+            hasTossCredentials = credentials?.isComplete == true
+            statusMessage = "Toss Invest Open API credentials saved."
+            Task { await refreshMarketData() }
+        } catch {
+            statusMessage = "Could not save credentials: \(error.localizedDescription)"
+        }
+    }
+
+    func clearTossCredentials() {
+        do {
+            try credentialsStore.clear()
+            tossAPIKey = ""
+            tossSecretKey = ""
+            hasTossCredentials = false
+            statusMessage = "Toss Invest Open API credentials removed."
+        } catch {
+            statusMessage = "Could not remove credentials: \(error.localizedDescription)"
+        }
+    }
 }
 
 private struct WatchlistRootView: View {
@@ -174,20 +392,28 @@ private struct WatchlistRootView: View {
         .toolbar {
             ToolbarItemGroup {
                 Button {
-                    viewModel.performAction("Add Symbol")
+                    viewModel.openAddSymbolSheet()
                 } label: {
                     Label("Add Symbol", systemImage: "plus")
                 }
+                .disabled(viewModel.isReorderingSymbols)
 
                 Button {
-                    viewModel.performAction("Remove")
+                    viewModel.removeSelectedSymbol()
                 } label: {
                     Label("Remove", systemImage: "minus")
                 }
-                .disabled(viewModel.selectedSection != .watchlist)
+                .disabled(viewModel.selectedSection != .watchlist || viewModel.symbols.isEmpty || viewModel.isReorderingSymbols)
             }
 
             ToolbarItemGroup {
+                Button {
+                    Task { await viewModel.refreshMarketData() }
+                } label: {
+                    Label("Refresh Prices", systemImage: "arrow.clockwise")
+                }
+                .disabled(viewModel.isRefreshingMarketData)
+
                 Button {
                     viewModel.performAction("Preview Screen Saver")
                 } label: {
@@ -200,6 +426,12 @@ private struct WatchlistRootView: View {
                     Label("Install Screen Saver", systemImage: "display.and.arrow.down")
                 }
             }
+        }
+        .task {
+            await viewModel.refreshMarketData()
+        }
+        .sheet(isPresented: $viewModel.isAddSymbolSheetPresented) {
+            AddSymbolSheet(viewModel: viewModel)
         }
     }
 
@@ -228,6 +460,9 @@ private struct WatchlistRootView: View {
         case .saver:
             ScreenSaverSettingsView(viewModel: viewModel)
                 .navigationTitle("Screen Saver")
+        case .api:
+            APISettingsView(viewModel: viewModel)
+                .navigationTitle("API")
         }
     }
 }
@@ -243,7 +478,12 @@ private struct OverviewView: View {
                     subtitle: "Monitor the selected symbol and screen saver presentation."
                 )
 
-                PreviewCard(quote: viewModel.selectedQuote, series: viewModel.selectedSeries)
+                PreviewCard(
+                    quote: viewModel.selectedQuote,
+                    series: viewModel.selectedSeries,
+                    appearanceMode: viewModel.appearanceMode,
+                    chartStyle: viewModel.chartStyle
+                )
 
                 HStack(spacing: 10) {
                     CommandButton(title: "Preview Saver", systemImage: "play.rectangle") {
@@ -263,7 +503,7 @@ private struct OverviewView: View {
 
                 ForEach(viewModel.symbols, id: \.self) { symbol in
                     SymbolRow(
-                        quote: MarketDataCatalog.quote(for: symbol),
+                        quote: viewModel.quote(for: symbol),
                         isSelected: symbol == viewModel.selectedSymbol
                     ) {
                         viewModel.selectSymbol(symbol)
@@ -287,28 +527,53 @@ private struct WatchlistView: View {
 
             HStack(spacing: 10) {
                 CommandButton(title: "Add Symbol", systemImage: "plus") {
-                    viewModel.performAction("Add Symbol")
+                    viewModel.openAddSymbolSheet()
                 }
+                .disabled(viewModel.isReorderingSymbols)
                 CommandButton(title: "Remove", systemImage: "minus") {
-                    viewModel.performAction("Remove")
+                    viewModel.removeSelectedSymbol()
                 }
-                CommandButton(title: "Reorder", systemImage: "arrow.up.arrow.down") {
-                    viewModel.performAction("Reorder")
+                .disabled(viewModel.symbols.isEmpty || viewModel.isReorderingSymbols)
+                CommandButton(
+                    title: viewModel.isReorderingSymbols ? "Done" : "Reorder",
+                    systemImage: viewModel.isReorderingSymbols ? "checkmark" : "arrow.up.arrow.down"
+                ) {
+                    viewModel.toggleReorderingSymbols()
                 }
+                .disabled(viewModel.symbols.count < 2)
                 Spacer()
-                CommandButton(title: "Import List", systemImage: "tray.and.arrow.down") {
-                    viewModel.performAction("Import List")
+                if viewModel.isRefreshingMarketData {
+                    ProgressView()
+                        .controlSize(.small)
                 }
+                CommandButton(title: "Refresh", systemImage: "arrow.clockwise") {
+                    Task { await viewModel.refreshMarketData() }
+                }
+                .disabled(viewModel.isRefreshingMarketData)
             }
 
-            List(viewModel.symbols, id: \.self, selection: $viewModel.selectedSymbol) { symbol in
-                SymbolRow(
-                    quote: MarketDataCatalog.quote(for: symbol),
-                    isSelected: symbol == viewModel.selectedSymbol
-                ) {
-                    viewModel.selectSymbol(symbol)
+            if let errorMessage = viewModel.marketDataErrorMessage {
+                Label(errorMessage, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            List(selection: $viewModel.selectedSymbol) {
+                ForEach(viewModel.symbols, id: \.self) { symbol in
+                    SymbolRow(
+                        quote: viewModel.quote(for: symbol),
+                        isSelected: symbol == viewModel.selectedSymbol
+                    ) {
+                        viewModel.selectSymbol(symbol)
+                    }
+                    .padding(.vertical, 3)
                 }
-                .padding(.vertical, 3)
+                .onMove { source, destination in
+                    viewModel.moveSymbols(from: source, to: destination)
+                }
+                .moveDisabled(!viewModel.isReorderingSymbols)
             }
             .clipShape(RoundedRectangle(cornerRadius: 8))
 
@@ -364,6 +629,115 @@ private struct ScreenSaverSettingsView: View {
             }
         }
         .padding(28)
+    }
+}
+
+private struct APISettingsView: View {
+    @ObservedObject var viewModel: WatchlistViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            HeaderBlock(
+                title: "Toss Invest Open API",
+                subtitle: "Store the credentials used to request OAuth access tokens for market data."
+            )
+
+            VStack(alignment: .leading, spacing: 14) {
+                LabeledContent("API Key") {
+                    TextField("Client ID or API key", text: $viewModel.tossAPIKey)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 360)
+                }
+
+                LabeledContent("Secret Key") {
+                    SecureField("Secret key", text: $viewModel.tossSecretKey)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 360)
+                }
+            }
+            .frame(maxWidth: 520, alignment: .leading)
+
+            HStack(spacing: 10) {
+                PrimaryCommandButton(title: "Save Credentials", systemImage: "key.fill") {
+                    viewModel.saveTossCredentials()
+                }
+
+                CommandButton(title: "Remove", systemImage: "trash") {
+                    viewModel.clearTossCredentials()
+                }
+                .disabled(!viewModel.hasTossCredentials && viewModel.tossAPIKey.isEmpty && viewModel.tossSecretKey.isEmpty)
+            }
+
+            Label(
+                viewModel.hasTossCredentials ? "Credentials are saved in Keychain." : "Credentials have not been saved.",
+                systemImage: viewModel.hasTossCredentials ? "checkmark.seal.fill" : "exclamationmark.circle"
+            )
+            .font(.caption)
+            .foregroundStyle(viewModel.hasTossCredentials ? Color.green : Color.secondary)
+
+            Text("The Open API base server is https://openapi.tossinvest.com.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Spacer()
+        }
+        .padding(28)
+    }
+}
+
+private struct AddSymbolSheet: View {
+    @ObservedObject var viewModel: WatchlistViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HeaderBlock(
+                title: "Add Symbol",
+                subtitle: "Add a KRX code or US ticker to the watchlist."
+            )
+
+            VStack(alignment: .leading, spacing: 8) {
+                TextField("005930 or AAPL", text: $viewModel.symbolToAdd)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 280)
+                    .disabled(viewModel.isAddingSymbol)
+                    .onSubmit {
+                        Task { await viewModel.addSymbol() }
+                    }
+
+                Text(StockSymbolInput.validationMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if let errorMessage = viewModel.addSymbolErrorMessage {
+                    Label(errorMessage, systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            HStack {
+                if viewModel.isAddingSymbol {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+
+                Spacer()
+
+                Button("Cancel") {
+                    viewModel.isAddSymbolSheetPresented = false
+                }
+                .disabled(viewModel.isAddingSymbol)
+
+                PrimaryCommandButton(title: "Add", systemImage: "plus") {
+                    Task { await viewModel.addSymbol() }
+                }
+                .disabled(viewModel.isAddingSymbol)
+            }
+        }
+        .padding(24)
+        .frame(width: 380)
     }
 }
 
@@ -616,8 +990,9 @@ private struct SymbolRow: View {
         Button(action: action) {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(quote.symbol)
+                    Text(quote.titleText)
                         .font(.body.monospacedDigit().weight(.semibold))
+                        .lineLimit(1)
                     Text("Market status")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -630,7 +1005,7 @@ private struct SymbolRow: View {
                         .font(.body.monospacedDigit())
                     Text(quote.changePercentText)
                         .font(.caption.monospacedDigit().weight(.semibold))
-                        .foregroundStyle(quote.changePercent >= 0 ? .red : .blue)
+                        .foregroundStyle(changeColor)
                 }
 
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
@@ -639,6 +1014,11 @@ private struct SymbolRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    private var changeColor: Color {
+        guard let changePercent = quote.changePercent else { return .secondary }
+        return changePercent >= 0 ? .red : .blue
     }
 }
 
@@ -714,17 +1094,17 @@ private struct PreviewCard: View {
                 HStack(spacing: 16) {
                     PreviewMetricBlock(
                         title: "Open",
-                        value: StockQuote.currencyText(for: series.points.first?.close ?? quote.price),
+                        value: StockQuote.currencyText(for: series.openingPrice ?? quote.price, currency: quote.currency),
                         palette: palette
                     )
                     PreviewMetricBlock(
                         title: "High",
-                        value: StockQuote.currencyText(for: series.highClose ?? quote.price),
+                        value: StockQuote.currencyText(for: series.highClose ?? quote.price, currency: quote.currency),
                         palette: palette
                     )
                     PreviewMetricBlock(
                         title: "Low",
-                        value: StockQuote.currencyText(for: series.lowClose ?? quote.price),
+                        value: StockQuote.currencyText(for: series.lowClose ?? quote.price, currency: quote.currency),
                         palette: palette
                     )
                     Spacer()
@@ -737,7 +1117,7 @@ private struct PreviewCard: View {
                 case .line:
                     MiniLineChart(
                         series: series,
-                        lineColor: quote.changePercent >= 0 ? .red : .blue,
+                        lineColor: changeColor,
                         gridColor: palette.grid
                     )
                 case .candlestick:
@@ -752,7 +1132,7 @@ private struct PreviewCard: View {
                             .padding(.horizontal, 10)
                             .padding(.vertical, 5)
                             .background(palette.badgeBackground, in: Capsule())
-                        Text("Updated 15:30 KST")
+                        Text(updatedText)
                             .font(.caption)
                             .foregroundStyle(palette.tertiaryText)
                     }
@@ -760,9 +1140,11 @@ private struct PreviewCard: View {
                     Spacer()
 
                     VStack(alignment: .trailing, spacing: 6) {
-                        Text(quote.symbol)
+                        Text(quote.titleText)
                             .font(.system(size: 24, weight: .semibold))
                             .foregroundStyle(palette.primaryText)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
                         Text(quote.priceText)
                             .font(.system(size: 44, weight: .bold))
                             .foregroundStyle(palette.primaryText)
@@ -771,7 +1153,7 @@ private struct PreviewCard: View {
                             .lineLimit(1)
                         Text(quote.changePercentText)
                             .font(.body.weight(.semibold))
-                            .foregroundStyle(quote.changePercent >= 0 ? .red : .blue)
+                            .foregroundStyle(changeColor)
                     }
                 }
             }
@@ -779,6 +1161,26 @@ private struct PreviewCard: View {
         }
         .frame(minHeight: 220)
     }
+
+    private var changeColor: Color {
+        guard let changePercent = quote.changePercent else { return palette.secondaryText }
+        return changePercent >= 0 ? .red : .blue
+    }
+
+    private var updatedText: String {
+        guard let timestamp = quote.timestamp else {
+            return "Waiting for market data"
+        }
+        return "Updated \(Self.timestampFormatter.string(from: timestamp))"
+    }
+
+    private static let timestampFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "Asia/Seoul")
+        formatter.dateFormat = "HH:mm 'KST'"
+        return formatter
+    }()
 }
 
 private struct PreviewMetricBlock: View {
@@ -840,7 +1242,7 @@ private struct MiniCandlestickChart: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let points = normalizedPoints(in: proxy.size)
+            let candles = normalizedCandles(in: proxy.size)
 
             ZStack {
                 Path { path in
@@ -852,27 +1254,27 @@ private struct MiniCandlestickChart: View {
                 }
                 .stroke(gridColor, style: StrokeStyle(lineWidth: 1, dash: [5, 8]))
 
-                ForEach(Array(points.enumerated()), id: \.offset) { index, point in
-                    let previous = index == 0 ? point : points[index - 1]
-                    let candleColor: Color = point.y <= previous.y ? .red : .blue
-                    let bodyHeight = max(abs(point.y - previous.y), 4)
+                ForEach(Array(candles.enumerated()), id: \.offset) { _, candle in
+                    let candleColor: Color = candle.closeY <= candle.openY ? .red : .blue
+                    let bodyHeight = max(abs(candle.closeY - candle.openY), 4)
 
-                    VStack(spacing: 0) {
+                    Group {
                         Rectangle()
                             .fill(candleColor.opacity(0.8))
-                            .frame(width: 2, height: max(bodyHeight + 8, 14))
+                            .frame(width: 2, height: max(candle.lowY - candle.highY, 14))
+                            .position(x: candle.x, y: (candle.highY + candle.lowY) / 2)
                         RoundedRectangle(cornerRadius: 2)
                             .fill(candleColor)
-                            .frame(width: max(proxy.size.width / CGFloat(max(points.count, 1)) * 0.42, 4), height: bodyHeight)
+                            .frame(width: max(proxy.size.width / CGFloat(max(candles.count, 1)) * 0.42, 4), height: bodyHeight)
+                            .position(x: candle.x, y: (candle.openY + candle.closeY) / 2)
                     }
-                    .position(x: point.x, y: (point.y + previous.y) / 2)
                 }
             }
         }
         .frame(minHeight: 52)
     }
 
-    private func normalizedPoints(in size: CGSize) -> [CGPoint] {
-        StockChartGeometry.normalizedPoints(for: series, in: size)
+    private func normalizedCandles(in size: CGSize) -> [StockChartGeometry.CandlePoint] {
+        StockChartGeometry.normalizedCandles(for: series, in: size)
     }
 }

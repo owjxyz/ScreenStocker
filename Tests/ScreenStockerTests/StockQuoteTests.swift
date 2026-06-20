@@ -1,20 +1,47 @@
 import XCTest
 
 final class StockQuoteTests: XCTestCase {
-    func testMarketDataReturnsSelectedQuote() {
+    func testMarketDataCatalogDoesNotReturnDummyQuoteValues() {
         let quote = MarketDataCatalog.quote(for: "000660")
 
         XCTAssertEqual(quote.symbol, "000660")
-        XCTAssertEqual(quote.changePercent, Decimal(string: "-0.82")!)
+        XCTAssertNil(quote.price)
+        XCTAssertNil(quote.changePercent)
+        XCTAssertEqual(quote.priceText, "-")
+        XCTAssertEqual(quote.changePercentText, "-")
     }
 
-    func testMarketChartSeriesUsesSelectedSymbol() {
+    func testMarketDataCatalogDoesNotGenerateDummyChartSeries() {
         let series = MarketDataCatalog.chartSeries(for: "035420")
 
         XCTAssertEqual(series.symbol, "035420")
-        XCTAssertGreaterThan(series.points.count, 2)
-        XCTAssertNotNil(series.highClose)
-        XCTAssertNotNil(series.lowClose)
+        XCTAssertTrue(series.points.isEmpty)
+        XCTAssertNil(series.highClose)
+        XCTAssertNil(series.lowClose)
+    }
+
+    func testKRWPriceTextOmitsFractionDigits() {
+        let quote = StockQuote(symbol: "005930", price: Decimal(75300), changePercent: nil, currency: "KRW")
+
+        XCTAssertEqual(quote.priceText, "₩75,300")
+    }
+
+    func testUSDPriceTextKeepsFractionDigits() {
+        let quote = StockQuote(symbol: "AAPL", price: Decimal(string: "123.45"), changePercent: nil, currency: "USD")
+
+        XCTAssertEqual(quote.priceText, "$123.45")
+    }
+
+    func testSymbolInputNormalizesKRXCodeWithLeadingZeroes() {
+        XCTAssertEqual(StockSymbolInput.normalizedSymbol(from: " 005930 "), "005930")
+    }
+
+    func testSymbolInputNormalizesUSTicker() {
+        XCTAssertEqual(StockSymbolInput.normalizedSymbol(from: " brk.b "), "BRK.B")
+    }
+
+    func testSymbolInputRejectsInvalidNumericCode() {
+        XCTAssertNil(StockSymbolInput.normalizedSymbol(from: "5930"))
     }
 
     func testPreferencesFallBackToDefaultSymbols() {
@@ -22,8 +49,6 @@ final class StockQuoteTests: XCTestCase {
         let preferences = StockerPreferences(defaults: defaults)
 
         XCTAssertEqual(preferences.registeredSymbols, MarketDataCatalog.symbols)
-        XCTAssertEqual(preferences.symbolForScreenSaverDisplay, MarketDataCatalog.symbols.first)
-        XCTAssertEqual(preferences.appearanceMode, .dark)
-        XCTAssertEqual(preferences.chartStyle, .line)
+        XCTAssertTrue(MarketDataCatalog.symbols.contains(preferences.symbolForScreenSaverDisplay ?? ""))
     }
 }

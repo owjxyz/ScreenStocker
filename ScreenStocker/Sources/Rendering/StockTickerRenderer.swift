@@ -68,6 +68,11 @@ private struct StockTickerPalette {
 @MainActor
 final class StockTickerRenderer {
     private var hostingView: NSHostingView<StockTickerScreenView>?
+    private var symbol: String?
+    private var quote: StockQuote?
+    private var series: StockChartSeries?
+    private var appearanceMode: ScreenSaverAppearanceMode = .dark
+    private var chartStyle: ScreenSaverChartStyle = .line
 
     func attach(
         to view: NSView,
@@ -75,15 +80,14 @@ final class StockTickerRenderer {
         appearanceMode: ScreenSaverAppearanceMode,
         chartStyle: ScreenSaverChartStyle
     ) {
-        let quote = MarketDataCatalog.quote(for: symbol)
-        let series = MarketDataCatalog.chartSeries(for: quote.symbol)
+        self.symbol = symbol
+        self.quote = StockQuote.placeholder(symbol: symbol)
+        self.series = StockChartSeries(symbol: symbol ?? "-", points: [])
+        self.appearanceMode = appearanceMode
+        self.chartStyle = chartStyle
+
         let hostingView = NSHostingView(
-            rootView: StockTickerScreenView(
-                quote: quote,
-                series: series,
-                appearanceMode: appearanceMode,
-                chartStyle: chartStyle
-            )
+            rootView: rootView()
         )
         hostingView.translatesAutoresizingMaskIntoConstraints = false
         hostingView.wantsLayer = true
@@ -101,11 +105,31 @@ final class StockTickerRenderer {
     }
 
     func update(symbol: String?, appearanceMode: ScreenSaverAppearanceMode, chartStyle: ScreenSaverChartStyle) {
-        let quote = MarketDataCatalog.quote(for: symbol)
+        let didChangeSymbol = symbol != self.symbol
+        self.symbol = symbol
+        self.appearanceMode = appearanceMode
+        self.chartStyle = chartStyle
+
+        if didChangeSymbol {
+            quote = StockQuote.placeholder(symbol: symbol)
+            series = StockChartSeries(symbol: symbol ?? "-", points: [])
+        }
+
         hostingView?.layer?.backgroundColor = appearanceMode.nsBackgroundColor.cgColor
-        hostingView?.rootView = StockTickerScreenView(
-            quote: quote,
-            series: MarketDataCatalog.chartSeries(for: quote.symbol),
+        hostingView?.rootView = rootView()
+    }
+
+    func update(snapshot: StockMarketSnapshot) {
+        quote = snapshot.quote
+        series = snapshot.series
+        symbol = snapshot.quote.symbol
+        hostingView?.rootView = rootView()
+    }
+
+    private func rootView() -> StockTickerScreenView {
+        StockTickerScreenView(
+            quote: quote ?? StockQuote.placeholder(symbol: symbol),
+            series: series ?? StockChartSeries(symbol: symbol ?? "-", points: []),
             appearanceMode: appearanceMode,
             chartStyle: chartStyle
         )
@@ -121,7 +145,8 @@ private struct StockTickerScreenView: View {
     @Environment(\.colorScheme) private var systemColorScheme
 
     private var accentColor: Color {
-        quote.changePercent >= 0 ? .red : .blue
+        guard let changePercent = quote.changePercent else { return palette.secondaryText }
+        return changePercent >= 0 ? .red : .blue
     }
 
     private var palette: StockTickerPalette {
@@ -140,17 +165,17 @@ private struct StockTickerScreenView: View {
                     HStack(spacing: 22) {
                         MetricBlock(
                             title: "Open",
-                            value: StockQuote.currencyText(for: series.points.first?.close ?? quote.price),
+                            value: StockQuote.currencyText(for: series.openingPrice ?? quote.price, currency: quote.currency),
                             palette: palette
                         )
                         MetricBlock(
                             title: "High",
-                            value: StockQuote.currencyText(for: series.highClose ?? quote.price),
+                            value: StockQuote.currencyText(for: series.highClose ?? quote.price, currency: quote.currency),
                             palette: palette
                         )
                         MetricBlock(
                             title: "Low",
-                            value: StockQuote.currencyText(for: series.lowClose ?? quote.price),
+                            value: StockQuote.currencyText(for: series.lowClose ?? quote.price, currency: quote.currency),
                             palette: palette
                         )
                         Spacer()
@@ -171,7 +196,7 @@ private struct StockTickerScreenView: View {
                     HStack(alignment: .bottom) {
                         VStack(alignment: .leading, spacing: 10) {
                             StatusBadge(title: "KRX", palette: palette)
-                            Text("Updated 15:30 KST")
+                            Text(updatedText)
                                 .font(.caption)
                                 .foregroundStyle(palette.tertiaryText)
                         }
@@ -179,9 +204,11 @@ private struct StockTickerScreenView: View {
                         Spacer()
 
                         VStack(alignment: .trailing, spacing: 10) {
-                            Text(quote.symbol)
+                            Text(quote.titleText)
                                 .font(.system(size: 36, weight: .semibold))
                                 .foregroundStyle(palette.primaryText)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.5)
 
                             Text(quote.priceText)
                                 .font(.system(size: 82, weight: .bold))
@@ -201,6 +228,21 @@ private struct StockTickerScreenView: View {
             }
         }
     }
+
+    private var updatedText: String {
+        guard let timestamp = quote.timestamp else {
+            return "Waiting for market data"
+        }
+        return "Updated \(Self.timestampFormatter.string(from: timestamp))"
+    }
+
+    private static let timestampFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "Asia/Seoul")
+        formatter.dateFormat = "HH:mm 'KST'"
+        return formatter
+    }()
 }
 
 private struct SaverLineChart: View {
@@ -256,26 +298,26 @@ private struct SaverCandlestickChart: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let points = normalizedPoints(in: proxy.size)
+            let candles = normalizedCandles(in: proxy.size)
 
             ZStack {
                 horizontalGrid(in: proxy.size)
 
-                ForEach(Array(points.enumerated()), id: \.offset) { index, point in
-                    let previous = index == 0 ? point : points[index - 1]
-                    let candleColor: Color = point.y <= previous.y ? .red : .blue
-                    let bodyHeight = max(abs(point.y - previous.y), 12)
-                    let candleWidth = max(proxy.size.width / CGFloat(max(points.count, 1)) * 0.42, 10)
+                ForEach(Array(candles.enumerated()), id: \.offset) { _, candle in
+                    let candleColor: Color = candle.closeY <= candle.openY ? .red : .blue
+                    let bodyHeight = max(abs(candle.closeY - candle.openY), 12)
+                    let candleWidth = max(proxy.size.width / CGFloat(max(candles.count, 1)) * 0.42, 10)
 
-                    VStack(spacing: 0) {
+                    Group {
                         Rectangle()
                             .fill(candleColor.opacity(0.78))
-                            .frame(width: 3, height: max(bodyHeight + 24, 30))
+                            .frame(width: 3, height: max(candle.lowY - candle.highY, 30))
+                            .position(x: candle.x, y: (candle.highY + candle.lowY) / 2)
                         RoundedRectangle(cornerRadius: 3)
                             .fill(candleColor)
                             .frame(width: candleWidth, height: bodyHeight)
+                            .position(x: candle.x, y: (candle.openY + candle.closeY) / 2)
                     }
-                    .position(x: point.x, y: (point.y + previous.y) / 2)
                 }
             }
         }
@@ -292,8 +334,8 @@ private struct SaverCandlestickChart: View {
         .stroke(gridColor, style: StrokeStyle(lineWidth: 1, dash: [6, 10]))
     }
 
-    private func normalizedPoints(in size: CGSize) -> [CGPoint] {
-        StockChartGeometry.normalizedPoints(for: series, in: size)
+    private func normalizedCandles(in size: CGSize) -> [StockChartGeometry.CandlePoint] {
+        StockChartGeometry.normalizedCandles(for: series, in: size)
     }
 }
 

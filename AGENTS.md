@@ -66,6 +66,7 @@ The goal of this project is to build a lightweight, maintainable stock-status sc
 - Keep screen saver hosting code under `ScreenStocker/Sources/ScreenSaver`.
 - Keep visual rendering components under `ScreenStocker/Sources/Rendering`.
 - Keep chart and visualization style decisions separate from data-fetching and persistence code so additional presentation types can be added without changing provider behavior.
+- Treat the management-app preview and the actual screen saver as one rendering contract. When changing screen saver data mapping, chart geometry, colors, timestamps, chart style handling, or fallback states, update the management-app preview in the same task so it reflects the installed saver behavior.
 - Keep the watchlist management app under `ScreenStockerApp/Sources`.
 - Prefer small, testable services such as quote providers, time-series providers, watchlist stores, and selection stores.
 - Avoid putting networking directly inside SwiftUI views.
@@ -90,6 +91,7 @@ The goal of this project is to build a lightweight, maintainable stock-status sc
 
 - Add focused unit tests for parsing, provider response mapping, watchlist persistence, selected-symbol fallback, and refresh scheduling rules.
 - For UI changes, verify the management app owns selected-symbol writes and the screen saver configuration does not duplicate symbol selection.
+- For any rendering or market-data change, verify both the management-app preview and the actual installed screen saver path. The preview should use the same quote, time-series, chart style, timestamp, empty/error, and fallback behavior as the screen saver unless there is an explicit product reason to diverge.
 - When changing the screen saver configuration sheet, verify that the "Open ScreenStocker" action can launch the management app and that status messages do not shift, clip, or overlap the sheet controls.
 - Before finishing implementation work, run the project build script when practical. When the task affects installed app behavior, screen saver rendering, configuration UI, preferences, or anything that must be observed through macOS System Settings or ScreenSaverEngine, use the refresh option so stale host processes reload the newly installed bundle:
 
