@@ -79,7 +79,7 @@ func imageData(at url: URL, tinted color: NSColor) throws -> Data {
         return data
     }
 
-    let fillPattern = #"fill="[^"]+""#
+    let fillPattern = ##"fill="#[0-9A-Fa-f]{6}""##
     let fillReplacement = #"fill="\#(hexColor(from: color))""#
     if let regex = try? NSRegularExpression(pattern: fillPattern) {
         svg = regex.stringByReplacingMatches(
