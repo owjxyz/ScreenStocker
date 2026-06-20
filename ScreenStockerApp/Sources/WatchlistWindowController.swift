@@ -278,8 +278,7 @@ final class WatchlistViewModel: ObservableObject {
             }
 
             let existingSeries = marketSnapshots[symbol]?.series ?? StockChartSeries(symbol: symbol, points: [])
-            let changePercent = changePercent(price: quote.price, series: existingSeries)
-                ?? marketSnapshots[symbol]?.quote.changePercent
+            let changePercent = quote.changePercent ?? marketSnapshots[symbol]?.quote.changePercent
             let mergedQuote = StockQuote(
                 symbol: quote.symbol,
                 displayName: quote.displayName,
@@ -290,11 +289,6 @@ final class WatchlistViewModel: ObservableObject {
             )
             return (symbol, StockMarketSnapshot(quote: mergedQuote, series: existingSeries))
         })
-    }
-
-    private func changePercent(price: Decimal?, series: StockChartSeries) -> Decimal? {
-        guard let price, let baseline = series.openingPrice, baseline != 0 else { return nil }
-        return ((price - baseline) / baseline) * 100
     }
 
     func toggleAppearanceMode() {

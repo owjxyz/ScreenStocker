@@ -154,6 +154,7 @@ final class TossInvestMarketDataClient {
         let stockInfos = (try? await fetchStockInfos(symbols: normalizedSymbols, token: token)) ?? []
         let stockInfoBySymbol = Dictionary(uniqueKeysWithValues: stockInfos.map { ($0.symbol, $0) })
         let prices = try await fetchPrices(symbols: normalizedSymbols, token: token)
+        let previousCloses = await previousDailyCloses(for: prices, token: token)
 
         return Dictionary(uniqueKeysWithValues: prices.map { price in
             (
@@ -162,7 +163,7 @@ final class TossInvestMarketDataClient {
                     symbol: price.symbol,
                     displayName: stockInfoBySymbol[price.symbol]?.localizedDisplayName,
                     price: price.lastPrice,
-                    changePercent: nil,
+                    changePercent: changePercent(price: price.lastPrice, baseline: previousCloses[price.symbol]),
                     currency: price.currency,
                     timestamp: price.timestamp
                 )
@@ -184,7 +185,11 @@ final class TossInvestMarketDataClient {
         }
 
         let series = try await fetchIntradaySeries(symbol: price.symbol, token: token)
-        let changePercent = changePercent(price: price, series: series)
+        let dailyCandles = (try? await fetchDailyCandlePage(symbol: price.symbol, token: token).candles) ?? []
+        let changePercent = changePercent(
+            price: price.lastPrice,
+            baseline: previousClose(for: price, dailyCandles: dailyCandles)
+        )
         let quote = StockQuote(
             symbol: price.symbol,
             displayName: stockInfo?.localizedDisplayName,
@@ -277,7 +282,13 @@ final class TossInvestMarketDataClient {
     }
 
     private func fetchIntradaySeries(symbol: String, token: String) async throws -> StockChartSeries {
-        let firstPage = try await fetchMinuteCandlePage(symbol: symbol, token: token, before: nil)
+        let firstPage = try await fetchCandlePage(
+            symbol: symbol,
+            token: token,
+            interval: "1m",
+            count: 200,
+            before: nil
+        )
         guard !firstPage.candles.isEmpty else {
             return StockChartSeries(symbol: symbol, points: [])
         }
@@ -312,7 +323,13 @@ final class TossInvestMarketDataClient {
                 break
             }
 
-            let page = try await fetchMinuteCandlePage(symbol: symbol, token: token, before: before)
+            let page = try await fetchCandlePage(
+                symbol: symbol,
+                token: token,
+                interval: "1m",
+                count: 200,
+                before: before
+            )
             allCandles.append(contentsOf: page.candles)
             before = page.nextBefore
             pageCount += 1
@@ -321,16 +338,28 @@ final class TossInvestMarketDataClient {
         return allCandles
     }
 
-    private func fetchMinuteCandlePage(
+    private func fetchDailyCandlePage(symbol: String, token: String) async throws -> CandlePageResponse {
+        try await fetchCandlePage(
+            symbol: symbol,
+            token: token,
+            interval: "1d",
+            count: 5,
+            before: nil
+        )
+    }
+
+    private func fetchCandlePage(
         symbol: String,
         token: String,
+        interval: String,
+        count: Int,
         before: Date?
     ) async throws -> CandlePageResponse {
         var components = URLComponents(url: apiURL(path: "candles"), resolvingAgainstBaseURL: false)!
         var queryItems = [
             URLQueryItem(name: "symbol", value: symbol),
-            URLQueryItem(name: "interval", value: "1m"),
-            URLQueryItem(name: "count", value: "200"),
+            URLQueryItem(name: "interval", value: interval),
+            URLQueryItem(name: "count", value: "\(count)"),
             URLQueryItem(name: "adjusted", value: "true")
         ]
         if let before {
@@ -345,9 +374,43 @@ final class TossInvestMarketDataClient {
         return try decoder.decode(CandleEnvelope.self, from: data).result
     }
 
-    private func changePercent(price: PriceResponse, series: StockChartSeries) -> Decimal? {
-        guard let baseline = series.openingPrice, baseline != 0 else { return nil }
-        return ((price.lastPrice - baseline) / baseline) * 100
+    private func previousDailyCloses(for prices: [PriceResponse], token: String) async -> [String: Decimal] {
+        var previousCloses: [String: Decimal] = [:]
+        for price in prices {
+            guard let dailyCandles = try? await fetchDailyCandlePage(symbol: price.symbol, token: token).candles,
+                  let previousClose = previousClose(for: price, dailyCandles: dailyCandles) else {
+                continue
+            }
+            previousCloses[price.symbol] = previousClose
+        }
+        return previousCloses
+    }
+
+    private func previousClose(for price: PriceResponse, dailyCandles: [CandleResponse]) -> Decimal? {
+        let sortedCandles = dailyCandles.sorted { $0.timestamp > $1.timestamp }
+        guard !sortedCandles.isEmpty else { return nil }
+
+        guard let priceTimestamp = price.timestamp else {
+            return sortedCandles.dropFirst().first?.closePrice ?? sortedCandles.first?.closePrice
+        }
+
+        let marketKind = StockSymbolInput.marketKind(for: price.symbol)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = Self.marketTimeZone(for: marketKind)
+        let priceDay = calendar.startOfDay(for: priceTimestamp)
+
+        if let previousTradingDayCandle = sortedCandles.first(where: {
+            calendar.startOfDay(for: $0.timestamp) < priceDay
+        }) {
+            return previousTradingDayCandle.closePrice
+        }
+
+        return sortedCandles.dropFirst().first?.closePrice
+    }
+
+    private func changePercent(price: Decimal?, baseline: Decimal?) -> Decimal? {
+        guard let price, let baseline, baseline != 0 else { return nil }
+        return ((price - baseline) / baseline) * 100
     }
 
     private func sessionBoundsForLatestAvailableCandles(

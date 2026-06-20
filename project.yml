@@ -54,6 +54,17 @@ targets:
         INFOPLIST_FILE: ScreenStockerApp/Resources/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_DEBUG_DYLIB: "NO"
+    preBuildScripts:
+      - name: Generate App Icon
+        basedOnDependencyAnalysis: false
+        script: |
+          set -euo pipefail
+
+          /usr/bin/swift \
+            -module-cache-path "$DERIVED_FILE_DIR/SwiftModuleCache" \
+            "$SRCROOT/Scripts/generate-app-icon-from-icon-composer.swift" \
+            "$SRCROOT/ScreenStockerApp/IconComposer/ScreenStockerIcon.icon" \
+            "$SRCROOT/ScreenStockerApp/Resources/Assets.xcassets/AppIcon.appiconset"
 
   ScreenStockerTests:
     type: bundle.unit-test
