@@ -2,6 +2,68 @@ import Foundation
 import ScreenSaver
 import Darwin
 
+enum ScreenSaverAppearanceMode: String, CaseIterable {
+    case light
+    case dark
+    case automatic
+
+    var title: String {
+        switch self {
+        case .light:
+            return "Light"
+        case .dark:
+            return "Dark"
+        case .automatic:
+            return "Auto"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .light:
+            return "sun.max"
+        case .dark:
+            return "moon"
+        case .automatic:
+            return "circle.lefthalf.filled"
+        }
+    }
+
+    var next: ScreenSaverAppearanceMode {
+        switch self {
+        case .light:
+            return .dark
+        case .dark:
+            return .automatic
+        case .automatic:
+            return .light
+        }
+    }
+}
+
+enum ScreenSaverChartStyle: String, CaseIterable {
+    case line
+    case candlestick
+
+    var title: String {
+        switch self {
+        case .line:
+            return "Line Chart"
+        case .candlestick:
+            return "Candlestick Chart"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .line:
+            return "chart.xyaxis.line"
+        case .candlestick:
+            return "chart.bar"
+        }
+    }
+}
+
 final class StockerPreferences {
     static let didChangeNotification = Notification.Name("com.lukeoh.ScreenStocker.preferencesChanged")
     static let defaultSymbols = MarketDataCatalog.symbols
@@ -10,6 +72,8 @@ final class StockerPreferences {
         static let registeredSymbols = "registeredSymbols"
         static let legacySymbols = "symbols"
         static let selectedSymbol = "selectedSymbol"
+        static let appearanceMode = "appearanceMode"
+        static let chartStyle = "chartStyle"
         static let watchlistSaved = "watchlistSaved"
     }
 
@@ -77,6 +141,36 @@ final class StockerPreferences {
         }
     }
 
+    var appearanceMode: ScreenSaverAppearanceMode {
+        get {
+            syncDefaults()
+            let storedMode = defaults.string(forKey: Key.appearanceMode)
+                ?? Self.hostPreferenceString(forKey: Key.appearanceMode)
+            return storedMode.flatMap(ScreenSaverAppearanceMode.init(rawValue:)) ?? .dark
+        }
+        set {
+            defaults.set(newValue.rawValue, forKey: Key.appearanceMode)
+            syncDefaults()
+            mirrorSharedPreferences()
+            notifyChanged()
+        }
+    }
+
+    var chartStyle: ScreenSaverChartStyle {
+        get {
+            syncDefaults()
+            let storedStyle = defaults.string(forKey: Key.chartStyle)
+                ?? Self.hostPreferenceString(forKey: Key.chartStyle)
+            return storedStyle.flatMap(ScreenSaverChartStyle.init(rawValue:)) ?? .line
+        }
+        set {
+            defaults.set(newValue.rawValue, forKey: Key.chartStyle)
+            syncDefaults()
+            mirrorSharedPreferences()
+            notifyChanged()
+        }
+    }
+
     private func migrateLegacyDefaultsIfNeeded() {
         syncDefaults()
 
@@ -91,6 +185,18 @@ final class StockerPreferences {
         if defaults.object(forKey: Key.selectedSymbol) == nil,
            let legacySelectedSymbol = normalize(symbols: [legacyDefaults?.string(forKey: Key.selectedSymbol) ?? ""]).first {
             defaults.set(legacySelectedSymbol, forKey: Key.selectedSymbol)
+        }
+
+        if defaults.object(forKey: Key.appearanceMode) == nil,
+           let legacyMode = legacyDefaults?.string(forKey: Key.appearanceMode),
+           ScreenSaverAppearanceMode(rawValue: legacyMode) != nil {
+            defaults.set(legacyMode, forKey: Key.appearanceMode)
+        }
+
+        if defaults.object(forKey: Key.chartStyle) == nil,
+           let legacyStyle = legacyDefaults?.string(forKey: Key.chartStyle),
+           ScreenSaverChartStyle(rawValue: legacyStyle) != nil {
+            defaults.set(legacyStyle, forKey: Key.chartStyle)
         }
 
         syncDefaults()
@@ -112,6 +218,18 @@ final class StockerPreferences {
                 defaults.set("", forKey: Key.selectedSymbol)
                 didRepair = true
             }
+        }
+
+        if let storedAppearanceMode = defaults.string(forKey: Key.appearanceMode),
+           ScreenSaverAppearanceMode(rawValue: storedAppearanceMode) == nil {
+            defaults.set(ScreenSaverAppearanceMode.dark.rawValue, forKey: Key.appearanceMode)
+            didRepair = true
+        }
+
+        if let storedChartStyle = defaults.string(forKey: Key.chartStyle),
+           ScreenSaverChartStyle(rawValue: storedChartStyle) == nil {
+            defaults.set(ScreenSaverChartStyle.line.rawValue, forKey: Key.chartStyle)
+            didRepair = true
         }
 
         if didRepair {
@@ -148,11 +266,15 @@ final class StockerPreferences {
     private func mirrorSharedPreferences() {
         let symbols = registeredSymbols
         let selectedSymbol = self.selectedSymbol ?? ""
+        let appearanceMode = self.appearanceMode.rawValue
+        let chartStyle = self.chartStyle.rawValue
         let joinedSymbols = symbols.joined(separator: ",")
 
         legacyDefaults?.set(joinedSymbols, forKey: Key.registeredSymbols)
         legacyDefaults?.set(joinedSymbols, forKey: Key.legacySymbols)
         legacyDefaults?.set(selectedSymbol, forKey: Key.selectedSymbol)
+        legacyDefaults?.set(appearanceMode, forKey: Key.appearanceMode)
+        legacyDefaults?.set(chartStyle, forKey: Key.chartStyle)
         legacyDefaults?.synchronize()
 
         for url in Self.screenSaverPreferenceURLs() {
@@ -160,6 +282,8 @@ final class StockerPreferences {
                 preferences[Key.registeredSymbols] = joinedSymbols
                 preferences[Key.legacySymbols] = joinedSymbols
                 preferences[Key.selectedSymbol] = selectedSymbol
+                preferences[Key.appearanceMode] = appearanceMode
+                preferences[Key.chartStyle] = chartStyle
                 preferences[Key.watchlistSaved] = true
             }
         }

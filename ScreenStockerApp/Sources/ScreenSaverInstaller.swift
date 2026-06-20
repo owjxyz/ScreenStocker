@@ -37,6 +37,7 @@ final class ScreenSaverInstaller {
         }
 
         try fileManager.copyItem(at: sourceURL, to: installURL)
+        clearScreenSaverRenderingCache()
         refreshScreenSaverHosts()
     }
 
@@ -69,12 +70,30 @@ final class ScreenSaverInstaller {
     }
 
     private func refreshScreenSaverHosts() {
-        for processName in ["System Settings", "legacyScreenSaver", "ScreenSaverEngine"] {
+        for processName in [
+            "cfprefsd",
+            "System Settings",
+            "legacyScreenSaver",
+            "ScreenSaverEngine",
+            "WallpaperAgent",
+            "wallpaperAgent"
+        ] {
             let task = Process()
             task.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
             task.arguments = ["-x", processName]
             try? task.run()
             task.waitUntilExit()
+        }
+    }
+
+    private func clearScreenSaverRenderingCache() {
+        let cacheURL = fileManager.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches", isDirectory: true)
+            .appendingPathComponent("com.apple.wallpaper.caches", isDirectory: true)
+            .appendingPathComponent("screenSaver-\(installURL.path)", isDirectory: true)
+
+        if fileManager.fileExists(atPath: cacheURL.path) {
+            try? fileManager.removeItem(at: cacheURL)
         }
     }
 }

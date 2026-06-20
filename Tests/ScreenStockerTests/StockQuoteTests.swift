@@ -23,5 +23,7 @@ final class StockQuoteTests: XCTestCase {
 
         XCTAssertEqual(preferences.registeredSymbols, MarketDataCatalog.symbols)
         XCTAssertEqual(preferences.symbolForScreenSaverDisplay, MarketDataCatalog.symbols.first)
+        XCTAssertEqual(preferences.appearanceMode, .dark)
+        XCTAssertEqual(preferences.chartStyle, .line)
     }
 }
