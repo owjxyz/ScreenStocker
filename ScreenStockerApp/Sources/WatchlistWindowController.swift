@@ -248,11 +248,11 @@ private struct ScreenSaverSettingsView: View {
     @ObservedObject var viewModel: WatchlistViewModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 24) {
             HeaderBlock(title: "Screen Saver", subtitle: "Choose how the selected symbol appears on screen.")
 
             PreviewCard(quote: viewModel.selectedQuote, series: viewModel.selectedSeries)
-                .frame(height: 300)
+                .frame(height: 280)
 
             HStack(spacing: 10) {
                 Picker("Display", selection: $viewModel.selectedSymbol) {
@@ -351,34 +351,69 @@ private struct PreviewCard: View {
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color.black)
 
-            VStack(alignment: .leading, spacing: 18) {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(quote.symbol)
-                            .font(.system(size: 30, weight: .semibold))
-                            .foregroundStyle(.white)
-                        Text(quote.priceText)
-                            .font(.system(size: 58, weight: .bold))
-                            .foregroundStyle(.white)
-                            .monospacedDigit()
-                        Text(quote.changePercentText)
-                            .font(.title3.weight(.semibold))
-                            .foregroundStyle(quote.changePercent >= 0 ? .red : .blue)
-                    }
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 16) {
+                    PreviewMetricBlock(title: "Open", value: StockQuote.currencyText(for: series.points.first?.close ?? quote.price))
+                    PreviewMetricBlock(title: "High", value: StockQuote.currencyText(for: series.highClose ?? quote.price))
+                    PreviewMetricBlock(title: "Low", value: StockQuote.currencyText(for: series.lowClose ?? quote.price))
                     Spacer()
-                    Text("KRX")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.white.opacity(0.7))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(.white.opacity(0.12), in: Capsule())
+                    Text("Market snapshot")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.52))
                 }
 
                 MiniLineChart(series: series, lineColor: quote.changePercent >= 0 ? .red : .blue)
+
+                HStack(alignment: .bottom) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("KRX")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.white.opacity(0.7))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(.white.opacity(0.12), in: Capsule())
+                        Text("Updated 15:30 KST")
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.58))
+                    }
+
+                    Spacer()
+
+                    VStack(alignment: .trailing, spacing: 6) {
+                        Text(quote.symbol)
+                            .font(.system(size: 24, weight: .semibold))
+                            .foregroundStyle(.white)
+                        Text(quote.priceText)
+                            .font(.system(size: 44, weight: .bold))
+                            .foregroundStyle(.white)
+                            .monospacedDigit()
+                            .minimumScaleFactor(0.7)
+                            .lineLimit(1)
+                        Text(quote.changePercentText)
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(quote.changePercent >= 0 ? .red : .blue)
+                    }
+                }
             }
-            .padding(26)
+            .padding(22)
         }
-        .frame(minHeight: 260)
+        .frame(minHeight: 220)
+    }
+}
+
+private struct PreviewMetricBlock: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.white.opacity(0.54))
+            Text(value)
+                .font(.caption.monospacedDigit().weight(.semibold))
+                .foregroundStyle(.white.opacity(0.9))
+        }
     }
 }
 
@@ -398,7 +433,7 @@ private struct MiniLineChart: View {
             }
             .stroke(lineColor, style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
         }
-        .frame(minHeight: 90)
+        .frame(minHeight: 52)
     }
 
     private func normalizedPoints(in size: CGSize) -> [CGPoint] {

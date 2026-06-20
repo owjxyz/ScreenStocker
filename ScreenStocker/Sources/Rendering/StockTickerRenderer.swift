@@ -50,8 +50,30 @@ private struct StockTickerScreenView: View {
                 Color.black.ignoresSafeArea()
 
                 VStack(alignment: .leading, spacing: 24) {
-                    HStack(alignment: .top) {
+                    HStack(spacing: 22) {
+                        MetricBlock(title: "Open", value: StockQuote.currencyText(for: series.points.first?.close ?? quote.price))
+                        MetricBlock(title: "High", value: StockQuote.currencyText(for: series.highClose ?? quote.price))
+                        MetricBlock(title: "Low", value: StockQuote.currencyText(for: series.lowClose ?? quote.price))
+                        Spacer()
+                        Text("Market snapshot")
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.52))
+                    }
+
+                    SaverLineChart(series: series, lineColor: accentColor)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                    HStack(alignment: .bottom) {
                         VStack(alignment: .leading, spacing: 10) {
+                            StatusBadge(title: "KRX")
+                            Text("Updated 15:30 KST")
+                                .font(.caption)
+                                .foregroundStyle(.white.opacity(0.58))
+                        }
+
+                        Spacer()
+
+                        VStack(alignment: .trailing, spacing: 10) {
                             Text(quote.symbol)
                                 .font(.system(size: 36, weight: .semibold))
                                 .foregroundStyle(.white)
@@ -67,28 +89,6 @@ private struct StockTickerScreenView: View {
                                 .font(.system(size: 32, weight: .semibold))
                                 .foregroundStyle(accentColor)
                         }
-
-                        Spacer()
-
-                        VStack(alignment: .trailing, spacing: 10) {
-                            StatusBadge(title: "KRX")
-                            Text("Updated 15:30 KST")
-                                .font(.caption)
-                                .foregroundStyle(.white.opacity(0.58))
-                        }
-                    }
-
-                    SaverLineChart(series: series, lineColor: accentColor)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                    HStack(spacing: 22) {
-                        MetricBlock(title: "Open", value: StockQuote.currencyText(for: series.points.first?.close ?? quote.price))
-                        MetricBlock(title: "High", value: StockQuote.currencyText(for: series.highClose ?? quote.price))
-                        MetricBlock(title: "Low", value: StockQuote.currencyText(for: series.lowClose ?? quote.price))
-                        Spacer()
-                        Text("Market snapshot")
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.52))
                     }
                 }
                 .padding(.horizontal, sideInset)
