@@ -65,7 +65,7 @@ enum ScreenSaverChartStyle: String, CaseIterable {
 }
 
 final class StockerPreferences {
-    static let didChangeNotification = Notification.Name("com.lukeoh.ScreenStocker.preferencesChanged")
+    static let didChangeNotification = Notification.Name("com.tasokiii.ScreenStocker.preferencesChanged")
     static let defaultSymbols = MarketDataCatalog.symbols
 
     private enum Key {
@@ -77,11 +77,13 @@ final class StockerPreferences {
         static let watchlistSaved = "watchlistSaved"
     }
 
-    private static let suiteName = "com.lukeoh.ScreenStocker.preferences"
+    private static let suiteName = "com.tasokiii.ScreenStocker.preferences"
+    private static let legacySuiteNames = ["com.lukeoh.ScreenStocker.preferences"]
     private static let legacyModuleName = "ScreenStocker"
     private static let invalidSymbols: Set<String> = ["KOSDAQ", "KOSPI", "KONEX"]
 
     private let defaults: UserDefaults
+    private let legacySuiteDefaults = StockerPreferences.legacySuiteNames.compactMap(UserDefaults.init(suiteName:))
     private let legacyDefaults = ScreenSaverDefaults(forModuleWithName: StockerPreferences.legacyModuleName)
 
     init(defaults: UserDefaults? = UserDefaults(suiteName: StockerPreferences.suiteName)) {
@@ -177,24 +179,26 @@ final class StockerPreferences {
         if defaults.object(forKey: Key.registeredSymbols) == nil {
             let legacySymbols = legacyDefaults?.string(forKey: Key.registeredSymbols)
                 ?? legacyDefaults?.string(forKey: Key.legacySymbols)
+                ?? legacySuiteString(forKey: Key.registeredSymbols)
+                ?? legacySuiteString(forKey: Key.legacySymbols)
             let migratedSymbols = normalize(symbols: legacySymbols?.split(separator: ",").map(String.init) ?? [])
             defaults.set((migratedSymbols.isEmpty ? Self.defaultSymbols : migratedSymbols).joined(separator: ","), forKey: Key.registeredSymbols)
             defaults.set(true, forKey: Key.watchlistSaved)
         }
 
         if defaults.object(forKey: Key.selectedSymbol) == nil,
-           let legacySelectedSymbol = normalize(symbols: [legacyDefaults?.string(forKey: Key.selectedSymbol) ?? ""]).first {
+           let legacySelectedSymbol = normalize(symbols: [legacyDefaults?.string(forKey: Key.selectedSymbol) ?? legacySuiteString(forKey: Key.selectedSymbol) ?? ""]).first {
             defaults.set(legacySelectedSymbol, forKey: Key.selectedSymbol)
         }
 
         if defaults.object(forKey: Key.appearanceMode) == nil,
-           let legacyMode = legacyDefaults?.string(forKey: Key.appearanceMode),
+           let legacyMode = legacyDefaults?.string(forKey: Key.appearanceMode) ?? legacySuiteString(forKey: Key.appearanceMode),
            ScreenSaverAppearanceMode(rawValue: legacyMode) != nil {
             defaults.set(legacyMode, forKey: Key.appearanceMode)
         }
 
         if defaults.object(forKey: Key.chartStyle) == nil,
-           let legacyStyle = legacyDefaults?.string(forKey: Key.chartStyle),
+           let legacyStyle = legacyDefaults?.string(forKey: Key.chartStyle) ?? legacySuiteString(forKey: Key.chartStyle),
            ScreenSaverChartStyle(rawValue: legacyStyle) != nil {
             defaults.set(legacyStyle, forKey: Key.chartStyle)
         }
@@ -262,6 +266,10 @@ final class StockerPreferences {
         }
     }
 
+    private func legacySuiteString(forKey key: String) -> String? {
+        legacySuiteDefaults.lazy.compactMap { $0.string(forKey: key) }.first
+    }
+
     private func mirrorSharedPreferences() {
         let symbols = registeredSymbols
         let selectedSymbol = self.selectedSymbol ?? ""
@@ -297,6 +305,7 @@ final class StockerPreferences {
         var urls = [
             containerPreferences.appendingPathComponent("\(suiteName).plist")
         ]
+        urls.append(contentsOf: legacySuiteNames.map { containerPreferences.appendingPathComponent("\($0).plist") })
 
         for byHostDirectory in [
             home.appendingPathComponent("Library/Preferences/ByHost", isDirectory: true),
@@ -316,18 +325,23 @@ final class StockerPreferences {
     }
 
     private static func hostPreferenceString(forKey key: String) -> String? {
-        guard let preferences = readPreferenceFile(at: hostPreferenceURL),
-              let value = preferences[key] as? String,
-              !value.isEmpty else {
-            return nil
+        for url in hostPreferenceURLs {
+            guard let preferences = readPreferenceFile(at: url),
+                  let value = preferences[key] as? String,
+                  !value.isEmpty else {
+                continue
+            }
+            return value
         }
-        return value
+        return nil
     }
 
-    private static var hostPreferenceURL: URL {
-        realHomeDirectory
+    private static var hostPreferenceURLs: [URL] {
+        let preferencesDirectory = realHomeDirectory
             .appendingPathComponent("Library/Preferences", isDirectory: true)
-            .appendingPathComponent("\(suiteName).plist")
+        return ([suiteName] + legacySuiteNames).map {
+            preferencesDirectory.appendingPathComponent("\($0).plist")
+        }
     }
 
     private static var realHomeDirectory: URL {

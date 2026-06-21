@@ -37,14 +37,15 @@ final class TossInvestCredentialsStore {
         static let secretKey = "secretKey"
     }
 
-    private let serviceName = "com.lukeoh.ScreenStocker.tossinvest-open-api"
+    private static let serviceName = "com.tasokiii.ScreenStocker.tossinvest-open-api"
+    private static let legacyServiceNames = ["com.lukeoh.ScreenStocker.tossinvest-open-api"]
 
     var credentials: TossInvestCredentials? {
-        guard let apiKey = read(account: Account.apiKey),
-              let secretKey = read(account: Account.secretKey),
+        guard let apiKey = read(account: Account.apiKey, serviceName: Self.serviceName),
+              let secretKey = read(account: Account.secretKey, serviceName: Self.serviceName),
               !apiKey.isEmpty,
               !secretKey.isEmpty else {
-            return nil
+            return legacyCredentials
         }
         return TossInvestCredentials(apiKey: apiKey, secretKey: secretKey)
     }
@@ -70,6 +71,26 @@ final class TossInvestCredentialsStore {
     func clear() throws {
         try delete(account: Account.apiKey)
         try delete(account: Account.secretKey)
+        for serviceName in Self.legacyServiceNames {
+            try delete(account: Account.apiKey, serviceName: serviceName)
+            try delete(account: Account.secretKey, serviceName: serviceName)
+        }
+    }
+
+    private var legacyCredentials: TossInvestCredentials? {
+        for serviceName in Self.legacyServiceNames {
+            guard let apiKey = read(account: Account.apiKey, serviceName: serviceName),
+                  let secretKey = read(account: Account.secretKey, serviceName: serviceName),
+                  !apiKey.isEmpty,
+                  !secretKey.isEmpty else {
+                continue
+            }
+
+            let credentials = TossInvestCredentials(apiKey: apiKey, secretKey: secretKey)
+            try? save(credentials)
+            return credentials
+        }
+        return nil
     }
 
     private func save(_ value: String, account: String) throws {
@@ -101,8 +122,8 @@ final class TossInvestCredentialsStore {
         }
     }
 
-    private func read(account: String) -> String? {
-        var query = baseQuery(account: account)
+    private func read(account: String, serviceName: String = TossInvestCredentialsStore.serviceName) -> String? {
+        var query = baseQuery(account: account, serviceName: serviceName)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
 
@@ -115,14 +136,14 @@ final class TossInvestCredentialsStore {
         return String(data: data, encoding: .utf8)
     }
 
-    private func delete(account: String) throws {
-        let status = SecItemDelete(baseQuery(account: account) as CFDictionary)
+    private func delete(account: String, serviceName: String = TossInvestCredentialsStore.serviceName) throws {
+        let status = SecItemDelete(baseQuery(account: account, serviceName: serviceName) as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw TossInvestCredentialsStoreError.keychainFailure(status)
         }
     }
 
-    private func baseQuery(account: String) -> [String: Any] {
+    private func baseQuery(account: String, serviceName: String = TossInvestCredentialsStore.serviceName) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: serviceName,

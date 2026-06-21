@@ -4,6 +4,7 @@ set -euo pipefail
 paths=(
   "$HOME/Library/Preferences/ByHost/ScreenStocker.1F4295EF-B57A-5B91-A32C-AF090916BEA6.plist"
   "$HOME/Library/Containers/com.apple.ScreenSaver.Engine.legacyScreenSaver/Data/Library/Preferences/ByHost/ScreenStocker.1F4295EF-B57A-5B91-A32C-AF090916BEA6.plist"
+  "$HOME/Library/Containers/com.apple.ScreenSaver.Engine.legacyScreenSaver/Data/Library/Preferences/com.tasokiii.ScreenStocker.preferences.plist"
   "$HOME/Library/Containers/com.apple.ScreenSaver.Engine.legacyScreenSaver/Data/Library/Preferences/com.lukeoh.ScreenStocker.preferences.plist"
   "$HOME/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches/com.apple.wallpaper.caches/screenSaver-/Users/lukeoh/Library/Screen Savers/ScreenStocker.saver"
 )

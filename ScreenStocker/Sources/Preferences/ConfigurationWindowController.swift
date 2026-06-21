@@ -54,7 +54,7 @@ final class ScreenSaverConfigurationViewModel: ObservableObject {
     }
 
     private static func managementAppURL() -> URL? {
-        if let bundleURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.lukeoh.ScreenStockerApp") {
+        if let bundleURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.tasokiii.ScreenStockerApp") {
             return bundleURL
         }
 
