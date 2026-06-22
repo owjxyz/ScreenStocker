@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 final class WatchlistWindowController: NSWindowController {
     init(preferences: StockerPreferences) {
@@ -82,6 +83,7 @@ final class WatchlistViewModel: ObservableObject {
     @Published var isRefreshingSelectedChart = false
     @Published var isAddingSymbol = false
     @Published var isReorderingSymbols = false
+    @Published var draggedSymbol: String?
     @Published var isAddSymbolSheetPresented = false
     @Published var symbolToAdd = ""
     @Published var addSymbolErrorMessage: String?
@@ -211,6 +213,7 @@ final class WatchlistViewModel: ObservableObject {
 
     func toggleReorderingSymbols() {
         isReorderingSymbols.toggle()
+        draggedSymbol = nil
         statusMessage = isReorderingSymbols ? "Drag symbols to reorder the watchlist." : "Watchlist order saved."
     }
 
@@ -218,6 +221,45 @@ final class WatchlistViewModel: ObservableObject {
         symbols.move(fromOffsets: source, toOffset: destination)
         preferences.registeredSymbols = symbols
         statusMessage = "Watchlist order saved."
+    }
+
+    func beginDraggingSymbol(_ symbol: String) {
+        guard isReorderingSymbols else { return }
+        draggedSymbol = symbol
+    }
+
+    func moveDraggedSymbol(before targetSymbol: String) {
+        guard
+            isReorderingSymbols,
+            let draggedSymbol,
+            draggedSymbol != targetSymbol,
+            let sourceIndex = symbols.firstIndex(of: draggedSymbol),
+            let targetIndex = symbols.firstIndex(of: targetSymbol)
+        else { return }
+
+        let movedSymbol = symbols.remove(at: sourceIndex)
+        let insertionIndex = sourceIndex < targetIndex ? targetIndex - 1 : targetIndex
+        symbols.insert(movedSymbol, at: insertionIndex)
+        preferences.registeredSymbols = symbols
+        statusMessage = "Watchlist order saved."
+    }
+
+    func moveDraggedSymbolToEnd() {
+        guard
+            isReorderingSymbols,
+            let draggedSymbol,
+            let sourceIndex = symbols.firstIndex(of: draggedSymbol),
+            sourceIndex != symbols.indices.last
+        else { return }
+
+        let movedSymbol = symbols.remove(at: sourceIndex)
+        symbols.append(movedSymbol)
+        preferences.registeredSymbols = symbols
+        statusMessage = "Watchlist order saved."
+    }
+
+    func finishDraggingSymbol() {
+        draggedSymbol = nil
     }
 
     func refreshMarketData() async {
@@ -514,7 +556,8 @@ private struct OverviewView: View {
                 ForEach(viewModel.symbols, id: \.self) { symbol in
                     SymbolRow(
                         quote: viewModel.quote(for: symbol),
-                        isSelected: symbol == viewModel.selectedSymbol
+                        isSelected: symbol == viewModel.selectedSymbol,
+                        isReordering: false
                     ) {
                         viewModel.selectSymbol(symbol)
                     }
@@ -584,16 +627,27 @@ private struct WatchlistView: View {
                 ForEach(viewModel.symbols, id: \.self) { symbol in
                     SymbolRow(
                         quote: viewModel.quote(for: symbol),
-                        isSelected: symbol == viewModel.selectedSymbol
+                        isSelected: symbol == viewModel.selectedSymbol,
+                        isReordering: viewModel.isReorderingSymbols
                     ) {
                         viewModel.selectSymbol(symbol)
                     }
                     .padding(.vertical, 3)
+                    .modifier(SymbolRowReorderModifier(
+                        symbol: symbol,
+                        viewModel: viewModel
+                    ))
                 }
-                .onMove { source, destination in
-                    viewModel.moveSymbols(from: source, to: destination)
+
+                if viewModel.isReorderingSymbols {
+                    Color.clear
+                        .frame(height: 16)
+                        .contentShape(Rectangle())
+                        .onDrop(
+                            of: [UTType.plainText],
+                            delegate: SymbolListEndDropDelegate(viewModel: viewModel)
+                        )
                 }
-                .moveDisabled(!viewModel.isReorderingSymbols)
             }
             .clipShape(RoundedRectangle(cornerRadius: 8))
 
@@ -1001,39 +1055,110 @@ private struct AppearanceModeButton: View {
     }
 }
 
+private struct SymbolRowReorderModifier: ViewModifier {
+    let symbol: String
+    @ObservedObject var viewModel: WatchlistViewModel
+
+    func body(content: Content) -> some View {
+        if viewModel.isReorderingSymbols {
+            content
+                .contentShape(Rectangle())
+                .opacity(viewModel.draggedSymbol == symbol ? 0.55 : 1)
+                .onDrag {
+                    viewModel.beginDraggingSymbol(symbol)
+                    return NSItemProvider(object: symbol as NSString)
+                }
+                .onDrop(
+                    of: [UTType.plainText],
+                    delegate: SymbolRowDropDelegate(
+                        targetSymbol: symbol,
+                        viewModel: viewModel
+                    )
+                )
+        } else {
+            content
+        }
+    }
+}
+
+private struct SymbolRowDropDelegate: DropDelegate {
+    let targetSymbol: String
+    @ObservedObject var viewModel: WatchlistViewModel
+
+    func dropEntered(info: DropInfo) {
+        viewModel.moveDraggedSymbol(before: targetSymbol)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        viewModel.finishDraggingSymbol()
+        return true
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+}
+
+private struct SymbolListEndDropDelegate: DropDelegate {
+    @ObservedObject var viewModel: WatchlistViewModel
+
+    func dropEntered(info: DropInfo) {
+        viewModel.moveDraggedSymbolToEnd()
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        viewModel.finishDraggingSymbol()
+        return true
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+}
+
 private struct SymbolRow: View {
     let quote: StockQuote
     let isSelected: Bool
+    let isReordering: Bool
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(quote.titleText)
-                        .font(.body.monospacedDigit().weight(.semibold))
-                        .lineLimit(1)
-                    Text("Market status")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-
-                VStack(alignment: .trailing, spacing: 3) {
-                    Text(quote.priceText)
-                        .font(.body.monospacedDigit())
-                    Text(quote.changePercentText)
-                        .font(.caption.monospacedDigit().weight(.semibold))
-                        .foregroundStyle(changeColor)
-                }
-
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+        if isReordering {
+            rowContent
+                .contentShape(Rectangle())
+        } else {
+            Button(action: action) {
+                rowContent
             }
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
         }
-        .buttonStyle(.plain)
+    }
+
+    private var rowContent: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(quote.titleText)
+                    .font(.body.monospacedDigit().weight(.semibold))
+                    .lineLimit(1)
+                Text("Market status")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            VStack(alignment: .trailing, spacing: 3) {
+                Text(quote.priceText)
+                    .font(.body.monospacedDigit())
+                Text(quote.changePercentText)
+                    .font(.caption.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(changeColor)
+            }
+
+            Image(systemName: isReordering ? "line.3.horizontal" : isSelected ? "checkmark.circle.fill" : "circle")
+                .foregroundStyle(isReordering ? Color.secondary : isSelected ? Color.accentColor : Color.secondary)
+        }
+        .contentShape(Rectangle())
     }
 
     private var changeColor: Color {
