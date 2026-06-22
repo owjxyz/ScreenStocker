@@ -9,7 +9,7 @@ final class ScreenStockerView: ScreenSaverView {
     private var configurationController: ConfigurationWindowController?
     private var refreshTask: Task<Void, Never>?
 
-    private static let refreshInterval: UInt64 = 300_000_000_000
+    private static let refreshInterval: UInt64 = 60_000_000_000
 
     override init?(frame: NSRect, isPreview: Bool) {
         super.init(frame: frame, isPreview: isPreview)

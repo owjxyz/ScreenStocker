@@ -51,4 +51,44 @@ final class StockQuoteTests: XCTestCase {
         XCTAssertEqual(preferences.registeredSymbols, MarketDataCatalog.symbols)
         XCTAssertTrue(MarketDataCatalog.symbols.contains(preferences.symbolForScreenSaverDisplay ?? ""))
     }
+
+    func testNormalizedPointsUseSessionProgressInsteadOfFillingWidth() {
+        let sessionStart = Date(timeIntervalSince1970: 1_700_000_000)
+        let sessionEnd = sessionStart.addingTimeInterval(6 * 60 * 60)
+        let series = StockChartSeries(
+            symbol: "TEST",
+            points: [
+                StockTimeSeriesPoint(date: sessionStart, close: 100),
+                StockTimeSeriesPoint(date: sessionStart.addingTimeInterval(60 * 60), close: 110),
+                StockTimeSeriesPoint(date: sessionStart.addingTimeInterval(2 * 60 * 60), close: 120)
+            ],
+            sessionStart: sessionStart,
+            sessionEnd: sessionEnd
+        )
+
+        let points = StockChartGeometry.normalizedPoints(for: series, in: CGSize(width: 600, height: 300))
+
+        XCTAssertEqual(points.count, 3)
+        XCTAssertEqual(Double(points[0].x), 0, accuracy: 0.1)
+        XCTAssertEqual(Double(points[1].x), 100, accuracy: 0.1)
+        XCTAssertEqual(Double(points[2].x), 200, accuracy: 0.1)
+    }
+
+    func testRecommendedCandleWidthTracksSessionLength() {
+        let sessionStart = Date(timeIntervalSince1970: 1_700_000_000)
+        let sessionEnd = sessionStart.addingTimeInterval(6 * 60 * 60)
+        let series = StockChartSeries(
+            symbol: "TEST",
+            points: [
+                StockTimeSeriesPoint(date: sessionStart, close: 100),
+                StockTimeSeriesPoint(date: sessionStart.addingTimeInterval(10 * 60), close: 102)
+            ],
+            sessionStart: sessionStart,
+            sessionEnd: sessionEnd
+        )
+
+        let width = StockChartGeometry.recommendedCandleWidth(for: series, in: CGSize(width: 600, height: 300))
+
+        XCTAssertEqual(Double(width), 13.333, accuracy: 0.2)
+    }
 }

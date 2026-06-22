@@ -304,7 +304,12 @@ final class TossInvestMarketDataClient {
             .filter { $0.timestamp >= sessionStart && $0.timestamp <= sessionEnd }
             .sorted { $0.timestamp < $1.timestamp }
         let points = aggregateTenMinuteCandles(sessionCandles, sessionStart: sessionStart)
-        return StockChartSeries(symbol: symbol, points: points)
+        return StockChartSeries(
+            symbol: symbol,
+            points: points,
+            sessionStart: sessionStart,
+            sessionEnd: sessionEnd
+        )
     }
 
     private func fetchSessionMinuteCandles(

@@ -23,6 +23,20 @@ struct StockTimeSeriesPoint: Equatable {
 struct StockChartSeries: Equatable {
     let symbol: String
     let points: [StockTimeSeriesPoint]
+    let sessionStart: Date?
+    let sessionEnd: Date?
+
+    init(
+        symbol: String,
+        points: [StockTimeSeriesPoint],
+        sessionStart: Date? = nil,
+        sessionEnd: Date? = nil
+    ) {
+        self.symbol = symbol
+        self.points = points
+        self.sessionStart = sessionStart
+        self.sessionEnd = sessionEnd
+    }
 
     var latestClose: Decimal? {
         points.last?.close
@@ -38,5 +52,12 @@ struct StockChartSeries: Equatable {
 
     var openingPrice: Decimal? {
         points.first?.open
+    }
+
+    var sessionDuration: TimeInterval? {
+        guard let sessionStart, let sessionEnd, sessionEnd > sessionStart else {
+            return nil
+        }
+        return sessionEnd.timeIntervalSince(sessionStart)
     }
 }

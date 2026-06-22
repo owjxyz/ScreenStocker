@@ -1086,22 +1086,20 @@ private struct PreviewCard: View {
 
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 16) {
-                    PreviewMetricBlock(
-                        title: "Open",
-                        value: StockQuote.currencyText(for: series.openingPrice ?? quote.price, currency: quote.currency),
-                        palette: palette
-                    )
-                    PreviewMetricBlock(
-                        title: "High",
-                        value: StockQuote.currencyText(for: series.highClose ?? quote.price, currency: quote.currency),
-                        palette: palette
-                    )
-                    PreviewMetricBlock(
-                        title: "Low",
-                        value: StockQuote.currencyText(for: series.lowClose ?? quote.price, currency: quote.currency),
-                        palette: palette
-                    )
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("KRX")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(palette.badgeText)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(palette.badgeBackground, in: Capsule())
+                        Text(updatedText)
+                            .font(.caption)
+                            .foregroundStyle(palette.tertiaryText)
+                    }
+
                     Spacer()
+
                     Text("Market snapshot")
                         .font(.caption)
                         .foregroundStyle(palette.secondaryText)
@@ -1119,16 +1117,22 @@ private struct PreviewCard: View {
                 }
 
                 HStack(alignment: .bottom) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("KRX")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(palette.badgeText)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(palette.badgeBackground, in: Capsule())
-                        Text(updatedText)
-                            .font(.caption)
-                            .foregroundStyle(palette.tertiaryText)
+                    HStack(spacing: 16) {
+                        PreviewMetricBlock(
+                            title: "Open",
+                            value: StockQuote.currencyText(for: series.openingPrice ?? quote.price, currency: quote.currency),
+                            palette: palette
+                        )
+                        PreviewMetricBlock(
+                            title: "High",
+                            value: StockQuote.currencyText(for: series.highClose ?? quote.price, currency: quote.currency),
+                            palette: palette
+                        )
+                        PreviewMetricBlock(
+                            title: "Low",
+                            value: StockQuote.currencyText(for: series.lowClose ?? quote.price, currency: quote.currency),
+                            palette: palette
+                        )
                     }
 
                     Spacer()
@@ -1220,6 +1224,13 @@ private struct MiniLineChart: View {
                     }
                 }
                 .stroke(lineColor, style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
+
+                if points.count == 1, let onlyPoint = points.first {
+                    Circle()
+                        .fill(lineColor)
+                        .frame(width: 10, height: 10)
+                        .position(onlyPoint)
+                }
             }
         }
         .frame(minHeight: 52)
@@ -1251,6 +1262,7 @@ private struct MiniCandlestickChart: View {
                 ForEach(Array(candles.enumerated()), id: \.offset) { _, candle in
                     let candleColor: Color = candle.closeY <= candle.openY ? .red : .blue
                     let bodyHeight = max(abs(candle.closeY - candle.openY), 4)
+                    let candleWidth = StockChartGeometry.recommendedCandleWidth(for: series, in: proxy.size)
 
                     Group {
                         Rectangle()
@@ -1259,7 +1271,7 @@ private struct MiniCandlestickChart: View {
                             .position(x: candle.x, y: (candle.highY + candle.lowY) / 2)
                         RoundedRectangle(cornerRadius: 2)
                             .fill(candleColor)
-                            .frame(width: max(proxy.size.width / CGFloat(max(candles.count, 1)) * 0.42, 4), height: bodyHeight)
+                            .frame(width: candleWidth, height: bodyHeight)
                             .position(x: candle.x, y: (candle.openY + candle.closeY) / 2)
                     }
                 }

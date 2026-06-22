@@ -18,38 +18,65 @@ enum StockChartGeometry {
 
     static func normalizedPoints(for series: StockChartSeries, in size: CGSize) -> [CGPoint] {
         let range = priceRange(for: series)
-        guard series.points.count > 1,
+        let xPositions = normalizedXPositions(for: series, in: size)
+        guard !series.points.isEmpty,
               let minValue = range.min,
-              let maxValue = range.max else {
+              let maxValue = range.max,
+              xPositions.count == series.points.count else {
             return []
         }
 
         return series.points.enumerated().map { index, point in
-            let x = CGFloat(index) / CGFloat(series.points.count - 1) * size.width
             let value = NSDecimalNumber(decimal: point.close).doubleValue
             let yRatio = (value - minValue) / max(maxValue - minValue, 1)
             let y = size.height - CGFloat(yRatio) * size.height
-            return CGPoint(x: x, y: y)
+            return CGPoint(x: xPositions[index], y: y)
         }
     }
 
     static func normalizedCandles(for series: StockChartSeries, in size: CGSize) -> [CandlePoint] {
         let range = priceRange(for: series)
-        guard series.points.count > 1,
+        let xPositions = normalizedXPositions(for: series, in: size)
+        guard !series.points.isEmpty,
               let minValue = range.min,
-              let maxValue = range.max else {
+              let maxValue = range.max,
+              xPositions.count == series.points.count else {
             return []
         }
 
         return series.points.enumerated().map { index, point in
             CandlePoint(
-                x: CGFloat(index) / CGFloat(series.points.count - 1) * size.width,
+                x: xPositions[index],
                 openY: yPosition(for: point.open, minValue: minValue, maxValue: maxValue, height: size.height),
                 highY: yPosition(for: point.high, minValue: minValue, maxValue: maxValue, height: size.height),
                 lowY: yPosition(for: point.low, minValue: minValue, maxValue: maxValue, height: size.height),
                 closeY: yPosition(for: point.close, minValue: minValue, maxValue: maxValue, height: size.height)
             )
         }
+    }
+
+    static func recommendedCandleWidth(for series: StockChartSeries, in size: CGSize) -> CGFloat {
+        guard size.width > 0 else {
+            return 0
+        }
+
+        if let sessionDuration = series.sessionDuration, sessionDuration > 0 {
+            let estimatedInterval = estimatedCandleInterval(for: series)
+            let width = size.width * CGFloat(estimatedInterval / sessionDuration) * 0.8
+            return max(width, 4)
+        }
+
+        let xPositions = normalizedXPositions(for: series, in: size).sorted()
+        let spacing = zip(xPositions, xPositions.dropFirst())
+            .map { max($1 - $0, 0) }
+            .filter { $0 > 0 }
+            .min()
+
+        if let spacing {
+            return max(spacing * 0.7, 4)
+        }
+
+        return max(size.width * 0.04, 4)
     }
 
     static func smoothCurveSegments(through points: [CGPoint]) -> [CurveSegment] {
@@ -80,6 +107,33 @@ enum StockChartGeometry {
         let lows = series.points.map { NSDecimalNumber(decimal: $0.low).doubleValue }
         let highs = series.points.map { NSDecimalNumber(decimal: $0.high).doubleValue }
         return (lows.min(), highs.max())
+    }
+
+    private static func normalizedXPositions(for series: StockChartSeries, in size: CGSize) -> [CGFloat] {
+        guard size.width > 0, !series.points.isEmpty else {
+            return []
+        }
+
+        let sessionStart = series.sessionStart ?? series.points.first?.date ?? Date()
+        let sessionEnd = series.sessionEnd ?? series.points.last?.date ?? sessionStart
+        let sessionDuration = max(sessionEnd.timeIntervalSince(sessionStart), 1)
+
+        return series.points.map { point in
+            let elapsed = min(max(point.date.timeIntervalSince(sessionStart), 0), sessionDuration)
+            return CGFloat(elapsed / sessionDuration) * size.width
+        }
+    }
+
+    private static func estimatedCandleInterval(for series: StockChartSeries) -> TimeInterval {
+        let intervals = zip(series.points, series.points.dropFirst())
+            .map { $1.date.timeIntervalSince($0.date) }
+            .filter { $0 > 0 }
+
+        if let interval = intervals.min() {
+            return interval
+        }
+
+        return 600
     }
 
     private static func yPosition(for value: Decimal, minValue: Double, maxValue: Double, height: CGFloat) -> CGFloat {

@@ -163,22 +163,15 @@ private struct StockTickerScreenView: View {
 
                 VStack(alignment: .leading, spacing: 24) {
                     HStack(spacing: 22) {
-                        MetricBlock(
-                            title: "Open",
-                            value: StockQuote.currencyText(for: series.openingPrice ?? quote.price, currency: quote.currency),
-                            palette: palette
-                        )
-                        MetricBlock(
-                            title: "High",
-                            value: StockQuote.currencyText(for: series.highClose ?? quote.price, currency: quote.currency),
-                            palette: palette
-                        )
-                        MetricBlock(
-                            title: "Low",
-                            value: StockQuote.currencyText(for: series.lowClose ?? quote.price, currency: quote.currency),
-                            palette: palette
-                        )
+                        VStack(alignment: .leading, spacing: 10) {
+                            StatusBadge(title: "KRX", palette: palette)
+                            Text(updatedText)
+                                .font(.caption)
+                                .foregroundStyle(palette.tertiaryText)
+                        }
+
                         Spacer()
+
                         Text("Market snapshot")
                             .font(.caption)
                             .foregroundStyle(palette.secondaryText)
@@ -194,11 +187,22 @@ private struct StockTickerScreenView: View {
                     }
 
                     HStack(alignment: .bottom) {
-                        VStack(alignment: .leading, spacing: 10) {
-                            StatusBadge(title: "KRX", palette: palette)
-                            Text(updatedText)
-                                .font(.caption)
-                                .foregroundStyle(palette.tertiaryText)
+                        HStack(spacing: 22) {
+                            MetricBlock(
+                                title: "Open",
+                                value: StockQuote.currencyText(for: series.openingPrice ?? quote.price, currency: quote.currency),
+                                palette: palette
+                            )
+                            MetricBlock(
+                                title: "High",
+                                value: StockQuote.currencyText(for: series.highClose ?? quote.price, currency: quote.currency),
+                                palette: palette
+                            )
+                            MetricBlock(
+                                title: "Low",
+                                value: StockQuote.currencyText(for: series.lowClose ?? quote.price, currency: quote.currency),
+                                palette: palette
+                            )
                         }
 
                         Spacer()
@@ -266,7 +270,12 @@ private struct SaverLineChart: View {
                 }
                 .stroke(lineColor, style: StrokeStyle(lineWidth: 6, lineCap: .round, lineJoin: .round))
 
-                if let lastPoint = points.last {
+                if points.count == 1, let onlyPoint = points.first {
+                    Circle()
+                        .fill(lineColor)
+                        .frame(width: 18, height: 18)
+                        .position(onlyPoint)
+                } else if let lastPoint = points.last {
                     Circle()
                         .fill(lineColor)
                         .frame(width: 18, height: 18)
@@ -306,7 +315,7 @@ private struct SaverCandlestickChart: View {
                 ForEach(Array(candles.enumerated()), id: \.offset) { _, candle in
                     let candleColor: Color = candle.closeY <= candle.openY ? .red : .blue
                     let bodyHeight = max(abs(candle.closeY - candle.openY), 12)
-                    let candleWidth = max(proxy.size.width / CGFloat(max(candles.count, 1)) * 0.42, 10)
+                    let candleWidth = StockChartGeometry.recommendedCandleWidth(for: series, in: proxy.size)
 
                     Group {
                         Rectangle()
