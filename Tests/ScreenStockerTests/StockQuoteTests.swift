@@ -32,6 +32,18 @@ final class StockQuoteTests: XCTestCase {
         XCTAssertEqual(quote.priceText, "$123.45")
     }
 
+    func testPositiveChangePercentTextIncludesPlusSign() {
+        let quote = StockQuote(symbol: "AAPL", displayName: nil, exchangeLabel: nil, price: nil, changePercent: Decimal(string: "1.23"))
+
+        XCTAssertEqual(quote.changePercentText, "+1.23%")
+    }
+
+    func testNegativeChangePercentTextKeepsMinusSign() {
+        let quote = StockQuote(symbol: "AAPL", displayName: nil, exchangeLabel: nil, price: nil, changePercent: Decimal(string: "-1.23"))
+
+        XCTAssertEqual(quote.changePercentText, "-1.23%")
+    }
+
     func testSymbolInputNormalizesKRXCodeWithLeadingZeroes() {
         XCTAssertEqual(StockSymbolInput.normalizedSymbol(from: " 005930 "), "005930")
     }

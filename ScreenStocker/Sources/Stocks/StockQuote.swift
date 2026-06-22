@@ -47,6 +47,7 @@ struct StockQuote: Equatable {
         let formatter = NumberFormatter()
         formatter.minimumFractionDigits = 2
         formatter.maximumFractionDigits = 2
+        formatter.positivePrefix = "+"
         return formatter
     }()
 
