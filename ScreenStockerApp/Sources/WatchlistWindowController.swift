@@ -520,7 +520,17 @@ private struct OverviewView: View {
                     }
                 }
 
-                Spacer()
+                HStack {
+                    Text("\(viewModel.symbols.count) symbols")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    ApplyButton {
+                        viewModel.saveSelectionToScreenSaver()
+                    }
+                }
+
+                Spacer(minLength: 0)
             }
             .frame(width: 250)
         }
@@ -592,7 +602,7 @@ private struct WatchlistView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
-                SaveSelectionButton {
+                ApplyButton {
                     viewModel.saveSelectionToScreenSaver()
                 }
             }
@@ -923,23 +933,23 @@ private struct PrimaryCommandNativeButton: NSViewRepresentable {
     }
 }
 
-private struct SaveSelectionButton: View {
+private struct ApplyButton: View {
     let action: () -> Void
 
     private static let preferredSize: CGSize = {
-        let button = NSButton(title: "Save Selection", target: nil, action: nil)
+        let button = NSButton(title: "Apply", target: nil, action: nil)
         button.bezelStyle = .rounded
         button.controlSize = .regular
         return button.intrinsicContentSize
     }()
 
     var body: some View {
-        SaveSelectionNativeButton(action: action)
+        ApplyNativeButton(action: action)
             .frame(width: Self.preferredSize.width, height: Self.preferredSize.height)
     }
 }
 
-private struct SaveSelectionNativeButton: NSViewRepresentable {
+private struct ApplyNativeButton: NSViewRepresentable {
     let action: () -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -948,7 +958,7 @@ private struct SaveSelectionNativeButton: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSButton {
         let button = NSButton(
-            title: "Save Selection",
+            title: "Apply",
             target: context.coordinator,
             action: #selector(Coordinator.performAction)
         )
