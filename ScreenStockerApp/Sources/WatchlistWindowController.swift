@@ -282,7 +282,10 @@ final class WatchlistViewModel: ObservableObject {
             let mergedQuote = StockQuote(
                 symbol: quote.symbol,
                 displayName: quote.displayName,
-                exchangeLabel: marketSnapshots[symbol]?.quote.exchangeLabel ?? quote.exchangeLabel,
+                exchangeLabel: preferredExchangeLabel(
+                    marketSnapshots[symbol]?.quote.exchangeLabel,
+                    fallback: quote.exchangeLabel
+                ),
                 price: quote.price,
                 changePercent: changePercent,
                 currency: quote.currency,
@@ -290,6 +293,18 @@ final class WatchlistViewModel: ObservableObject {
             )
             return (symbol, StockMarketSnapshot(quote: mergedQuote, series: existingSeries))
         })
+    }
+
+    private func preferredExchangeLabel(_ primary: String?, fallback: String?) -> String? {
+        if let primary, !primary.isEmpty {
+            return primary
+        }
+
+        if let fallback, !fallback.isEmpty {
+            return fallback
+        }
+
+        return nil
     }
 
     func toggleAppearanceMode() {
@@ -1080,6 +1095,14 @@ private struct PreviewCard: View {
         PreviewPalette(appearanceMode: appearanceMode, systemColorScheme: systemColorScheme)
     }
 
+    private var exchangeLabelText: String {
+        if let exchangeLabel = quote.exchangeLabel, !exchangeLabel.isEmpty {
+            return exchangeLabel
+        }
+
+        return StockSymbolInput.marketKind(for: quote.symbol) == .krx ? "KRX" : "US"
+    }
+
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 8)
@@ -1088,7 +1111,7 @@ private struct PreviewCard: View {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 16) {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(quote.exchangeLabel ?? "Market")
+                        Text(exchangeLabelText)
                             .font(.caption.weight(.bold))
                             .foregroundStyle(palette.badgeText)
                             .padding(.horizontal, 10)
