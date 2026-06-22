@@ -604,8 +604,8 @@ final class TossInvestMarketDataClient {
             let afterStart = Self.sessionDate(matching: date, hour: 15, minute: 40, calendar: calendar)
             let afterEnd = Self.sessionDate(matching: date, hour: 20, minute: 0, calendar: calendar)
             return [
-                TradingSessionWindow(start: preStart, end: preEnd, dividerAfter: preEnd),
-                TradingSessionWindow(start: regularStart, end: regularEnd, dividerAfter: afterStart),
+                TradingSessionWindow(start: preStart, end: preEnd, dividerAfter: regularStart),
+                TradingSessionWindow(start: regularStart, end: regularEnd, dividerAfter: regularEnd),
                 TradingSessionWindow(start: afterStart, end: afterEnd, dividerAfter: nil)
             ]
         case .nxt:
@@ -616,8 +616,8 @@ final class TossInvestMarketDataClient {
             let afterStart = Self.sessionDate(matching: date, hour: 15, minute: 40, calendar: calendar)
             let afterEnd = Self.sessionDate(matching: date, hour: 20, minute: 0, calendar: calendar)
             return [
-                TradingSessionWindow(start: preStart, end: preEnd, dividerAfter: preEnd),
-                TradingSessionWindow(start: regularStart, end: regularEnd, dividerAfter: afterStart),
+                TradingSessionWindow(start: preStart, end: preEnd, dividerAfter: regularStart),
+                TradingSessionWindow(start: regularStart, end: regularEnd, dividerAfter: regularEnd),
                 TradingSessionWindow(start: afterStart, end: afterEnd, dividerAfter: nil)
             ]
         case .us:
