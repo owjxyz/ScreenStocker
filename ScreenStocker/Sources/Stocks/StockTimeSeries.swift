@@ -25,17 +25,23 @@ struct StockChartSeries: Equatable {
     let points: [StockTimeSeriesPoint]
     let sessionStart: Date?
     let sessionEnd: Date?
+    let sessionDividers: [Date]
+    let trackingExchangeLabel: String?
 
     init(
         symbol: String,
         points: [StockTimeSeriesPoint],
         sessionStart: Date? = nil,
-        sessionEnd: Date? = nil
+        sessionEnd: Date? = nil,
+        sessionDividers: [Date] = [],
+        trackingExchangeLabel: String? = nil
     ) {
         self.symbol = symbol
         self.points = points
         self.sessionStart = sessionStart
         self.sessionEnd = sessionEnd
+        self.sessionDividers = sessionDividers
+        self.trackingExchangeLabel = trackingExchangeLabel
     }
 
     var latestClose: Decimal? {

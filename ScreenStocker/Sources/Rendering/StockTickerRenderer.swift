@@ -153,6 +153,13 @@ private struct StockTickerScreenView: View {
         StockTickerPalette(appearanceMode: appearanceMode, systemColorScheme: systemColorScheme)
     }
 
+    private var exchangeLabelText: String {
+        if let exchangeLabel = quote.exchangeLabel, !exchangeLabel.isEmpty {
+            return exchangeLabel
+        }
+        return StockSymbolInput.marketKind(for: quote.symbol) == .krx ? "KRX" : "US"
+    }
+
     var body: some View {
         GeometryReader { proxy in
             let sideInset = max(proxy.size.width * 0.07, 44)
@@ -164,7 +171,7 @@ private struct StockTickerScreenView: View {
                 VStack(alignment: .leading, spacing: 24) {
                     HStack(spacing: 22) {
                         VStack(alignment: .leading, spacing: 10) {
-                            StatusBadge(title: "KRX", palette: palette)
+                            StatusBadge(title: exchangeLabelText, palette: palette)
                             Text(updatedText)
                                 .font(.caption)
                                 .foregroundStyle(palette.tertiaryText)
@@ -260,6 +267,7 @@ private struct SaverLineChart: View {
 
             ZStack {
                 horizontalGrid(in: proxy.size)
+                verticalSessionGrid(in: proxy.size)
 
                 Path { path in
                     guard let firstPoint = points.first else { return }
@@ -296,8 +304,23 @@ private struct SaverLineChart: View {
         .stroke(gridColor, style: StrokeStyle(lineWidth: 1, dash: [6, 10]))
     }
 
+    private func verticalSessionGrid(in size: CGSize) -> some View {
+        Path { path in
+            for x in sessionDividerPositions(in: size) {
+                path.move(to: CGPoint(x: x, y: 0))
+                path.addLine(to: CGPoint(x: x, y: size.height))
+            }
+        }
+        .stroke(gridColor, style: StrokeStyle(lineWidth: 1, dash: [6, 10]))
+    }
+
     private func normalizedPoints(in size: CGSize) -> [CGPoint] {
         StockChartGeometry.normalizedPoints(for: series, in: size)
+    }
+
+    private func sessionDividerPositions(in size: CGSize) -> [CGFloat] {
+        series.sessionDividers
+            .map { StockChartGeometry.normalizedXPosition(for: $0, in: series, size: size) }
     }
 }
 
@@ -311,6 +334,7 @@ private struct SaverCandlestickChart: View {
 
             ZStack {
                 horizontalGrid(in: proxy.size)
+                verticalSessionGrid(in: proxy.size)
 
                 ForEach(Array(candles.enumerated()), id: \.offset) { _, candle in
                     let candleColor: Color = candle.closeY <= candle.openY ? .red : .blue
@@ -343,8 +367,23 @@ private struct SaverCandlestickChart: View {
         .stroke(gridColor, style: StrokeStyle(lineWidth: 1, dash: [6, 10]))
     }
 
+    private func verticalSessionGrid(in size: CGSize) -> some View {
+        Path { path in
+            for x in sessionDividerPositions(in: size) {
+                path.move(to: CGPoint(x: x, y: 0))
+                path.addLine(to: CGPoint(x: x, y: size.height))
+            }
+        }
+        .stroke(gridColor, style: StrokeStyle(lineWidth: 1, dash: [6, 10]))
+    }
+
     private func normalizedCandles(in size: CGSize) -> [StockChartGeometry.CandlePoint] {
         StockChartGeometry.normalizedCandles(for: series, in: size)
+    }
+
+    private func sessionDividerPositions(in size: CGSize) -> [CGFloat] {
+        series.sessionDividers
+            .map { StockChartGeometry.normalizedXPosition(for: $0, in: series, size: size) }
     }
 }
 

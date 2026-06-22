@@ -21,13 +21,13 @@ final class StockQuoteTests: XCTestCase {
     }
 
     func testKRWPriceTextOmitsFractionDigits() {
-        let quote = StockQuote(symbol: "005930", price: Decimal(75300), changePercent: nil, currency: "KRW")
+        let quote = StockQuote(symbol: "005930", displayName: nil, exchangeLabel: nil, price: Decimal(75300), changePercent: nil, currency: "KRW")
 
         XCTAssertEqual(quote.priceText, "₩75,300")
     }
 
     func testUSDPriceTextKeepsFractionDigits() {
-        let quote = StockQuote(symbol: "AAPL", price: Decimal(string: "123.45"), changePercent: nil, currency: "USD")
+        let quote = StockQuote(symbol: "AAPL", displayName: nil, exchangeLabel: nil, price: Decimal(string: "123.45"), changePercent: nil, currency: "USD")
 
         XCTAssertEqual(quote.priceText, "$123.45")
     }
@@ -90,5 +90,30 @@ final class StockQuoteTests: XCTestCase {
         let width = StockChartGeometry.recommendedCandleWidth(for: series, in: CGSize(width: 600, height: 300))
 
         XCTAssertEqual(Double(width), 13.333, accuracy: 0.2)
+    }
+
+    func testNormalizedXPositionUsesExtendedTradingHoursForUSSeries() {
+        let sessionStart = Date(timeIntervalSince1970: 1_700_000_000)
+        let sessionEnd = sessionStart.addingTimeInterval(16 * 60 * 60)
+        let regularOpen = sessionStart.addingTimeInterval(5.5 * 60 * 60)
+        let regularClose = sessionStart.addingTimeInterval(12 * 60 * 60)
+        let series = StockChartSeries(
+            symbol: "AAPL",
+            points: [
+                StockTimeSeriesPoint(date: sessionStart, close: 100),
+                StockTimeSeriesPoint(date: regularOpen, close: 102),
+                StockTimeSeriesPoint(date: regularClose, close: 104)
+            ],
+            sessionStart: sessionStart,
+            sessionEnd: sessionEnd,
+            sessionDividers: [regularOpen, regularClose]
+        )
+
+        let openX = StockChartGeometry.normalizedXPosition(for: regularOpen, in: series, size: CGSize(width: 600, height: 300))
+        let closeX = StockChartGeometry.normalizedXPosition(for: regularClose, in: series, size: CGSize(width: 600, height: 300))
+
+        XCTAssertEqual(Double(openX), 206.25, accuracy: 0.1)
+        XCTAssertEqual(Double(closeX), 450, accuracy: 0.1)
+        XCTAssertEqual(series.sessionDividers.count, 2)
     }
 }

@@ -79,6 +79,18 @@ enum StockChartGeometry {
         return max(size.width * 0.04, 4)
     }
 
+    static func normalizedXPosition(for date: Date, in series: StockChartSeries, size: CGSize) -> CGFloat {
+        guard size.width > 0 else {
+            return 0
+        }
+
+        let sessionStart = series.sessionStart ?? series.points.first?.date ?? date
+        let sessionEnd = series.sessionEnd ?? series.points.last?.date ?? sessionStart
+        let sessionDuration = max(sessionEnd.timeIntervalSince(sessionStart), 1)
+        let elapsed = min(max(date.timeIntervalSince(sessionStart), 0), sessionDuration)
+        return CGFloat(elapsed / sessionDuration) * size.width
+    }
+
     static func smoothCurveSegments(through points: [CGPoint]) -> [CurveSegment] {
         guard points.count > 1 else {
             return []
@@ -114,14 +126,7 @@ enum StockChartGeometry {
             return []
         }
 
-        let sessionStart = series.sessionStart ?? series.points.first?.date ?? Date()
-        let sessionEnd = series.sessionEnd ?? series.points.last?.date ?? sessionStart
-        let sessionDuration = max(sessionEnd.timeIntervalSince(sessionStart), 1)
-
-        return series.points.map { point in
-            let elapsed = min(max(point.date.timeIntervalSince(sessionStart), 0), sessionDuration)
-            return CGFloat(elapsed / sessionDuration) * size.width
-        }
+        return series.points.map { normalizedXPosition(for: $0.date, in: series, size: size) }
     }
 
     private static func estimatedCandleInterval(for series: StockChartSeries) -> TimeInterval {

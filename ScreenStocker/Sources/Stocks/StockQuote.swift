@@ -3,6 +3,7 @@ import Foundation
 struct StockQuote: Equatable {
     let symbol: String
     var displayName: String?
+    var exchangeLabel: String?
     let price: Decimal?
     let changePercent: Decimal?
     var currency: String = "KRW"
@@ -58,7 +59,7 @@ struct StockQuote: Equatable {
     }
 
     static func placeholder(symbol: String?) -> StockQuote {
-        StockQuote(symbol: symbol ?? "-", displayName: nil, price: nil, changePercent: nil)
+        StockQuote(symbol: symbol ?? "-", displayName: nil, exchangeLabel: nil, price: nil, changePercent: nil)
     }
 }
 

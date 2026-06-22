@@ -282,6 +282,7 @@ final class WatchlistViewModel: ObservableObject {
             let mergedQuote = StockQuote(
                 symbol: quote.symbol,
                 displayName: quote.displayName,
+                exchangeLabel: marketSnapshots[symbol]?.quote.exchangeLabel ?? quote.exchangeLabel,
                 price: quote.price,
                 changePercent: changePercent,
                 currency: quote.currency,
@@ -1087,7 +1088,7 @@ private struct PreviewCard: View {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 16) {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("KRX")
+                        Text(quote.exchangeLabel ?? "Market")
                             .font(.caption.weight(.bold))
                             .foregroundStyle(palette.badgeText)
                             .padding(.horizontal, 10)
@@ -1217,6 +1218,14 @@ private struct MiniLineChart: View {
                 .stroke(gridColor, style: StrokeStyle(lineWidth: 1, dash: [5, 8]))
 
                 Path { path in
+                    for x in sessionDividerPositions(in: proxy.size) {
+                        path.move(to: CGPoint(x: x, y: 0))
+                        path.addLine(to: CGPoint(x: x, y: proxy.size.height))
+                    }
+                }
+                .stroke(gridColor, style: StrokeStyle(lineWidth: 1, dash: [5, 8]))
+
+                Path { path in
                     guard let firstPoint = points.first else { return }
                     path.move(to: firstPoint)
                     for segment in StockChartGeometry.smoothCurveSegments(through: points) {
@@ -1239,6 +1248,11 @@ private struct MiniLineChart: View {
     private func normalizedPoints(in size: CGSize) -> [CGPoint] {
         StockChartGeometry.normalizedPoints(for: series, in: size)
     }
+
+    private func sessionDividerPositions(in size: CGSize) -> [CGFloat] {
+        series.sessionDividers
+            .map { StockChartGeometry.normalizedXPosition(for: $0, in: series, size: size) }
+    }
 }
 
 private struct MiniCandlestickChart: View {
@@ -1255,6 +1269,14 @@ private struct MiniCandlestickChart: View {
                         let y = CGFloat(index) / 2 * proxy.size.height
                         path.move(to: CGPoint(x: 0, y: y))
                         path.addLine(to: CGPoint(x: proxy.size.width, y: y))
+                    }
+                }
+                .stroke(gridColor, style: StrokeStyle(lineWidth: 1, dash: [5, 8]))
+
+                Path { path in
+                    for x in sessionDividerPositions(in: proxy.size) {
+                        path.move(to: CGPoint(x: x, y: 0))
+                        path.addLine(to: CGPoint(x: x, y: proxy.size.height))
                     }
                 }
                 .stroke(gridColor, style: StrokeStyle(lineWidth: 1, dash: [5, 8]))
@@ -1282,5 +1304,10 @@ private struct MiniCandlestickChart: View {
 
     private func normalizedCandles(in size: CGSize) -> [StockChartGeometry.CandlePoint] {
         StockChartGeometry.normalizedCandles(for: series, in: size)
+    }
+
+    private func sessionDividerPositions(in size: CGSize) -> [CGFloat] {
+        series.sessionDividers
+            .map { StockChartGeometry.normalizedXPosition(for: $0, in: series, size: size) }
     }
 }

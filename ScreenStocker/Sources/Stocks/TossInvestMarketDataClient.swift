@@ -23,6 +23,18 @@ enum TossInvestMarketDataError: LocalizedError {
 }
 
 final class TossInvestMarketDataClient {
+    private enum TradingVenue {
+        case krx
+        case nxt
+        case us
+    }
+
+    private struct TradingSessionWindow {
+        let start: Date
+        let end: Date
+        let dividerAfter: Date?
+    }
+
     private struct TokenResponse: Decodable {
         let accessToken: String
 
@@ -111,6 +123,9 @@ final class TossInvestMarketDataClient {
         let highPrice: Decimal?
         let lowPrice: Decimal?
         let closePrice: Decimal
+        let market: String?
+        let exchange: String?
+        let venue: String?
 
         private enum CodingKeys: String, CodingKey {
             case timestamp
@@ -118,6 +133,12 @@ final class TossInvestMarketDataClient {
             case highPrice
             case lowPrice
             case closePrice
+            case market
+            case exchange
+            case venue
+            case tradingVenue
+            case marketCode
+            case exchangeCode
         }
 
         init(from decoder: Decoder) throws {
@@ -127,6 +148,18 @@ final class TossInvestMarketDataClient {
             highPrice = try container.decodeDecimalIfPresent(forKey: .highPrice)
             lowPrice = try container.decodeDecimalIfPresent(forKey: .lowPrice)
             closePrice = try container.decodeDecimal(forKey: .closePrice)
+            market = try container.decodeIfPresent(String.self, forKey: .market)
+                ?? container.decodeIfPresent(String.self, forKey: .marketCode)
+            exchange = try container.decodeIfPresent(String.self, forKey: .exchange)
+                ?? container.decodeIfPresent(String.self, forKey: .exchangeCode)
+            venue = try container.decodeIfPresent(String.self, forKey: .venue)
+                ?? container.decodeIfPresent(String.self, forKey: .tradingVenue)
+        }
+
+        var trackingExchangeLabel: String? {
+            TossInvestMarketDataClient.normalizedExchangeLabel(from: venue)
+                ?? TossInvestMarketDataClient.normalizedExchangeLabel(from: exchange)
+                ?? TossInvestMarketDataClient.normalizedExchangeLabel(from: market)
         }
     }
 
@@ -162,6 +195,7 @@ final class TossInvestMarketDataClient {
                 StockQuote(
                     symbol: price.symbol,
                     displayName: stockInfoBySymbol[price.symbol]?.localizedDisplayName,
+                    exchangeLabel: marketLabel(for: stockInfoBySymbol[price.symbol]?.market, symbol: price.symbol),
                     price: price.lastPrice,
                     changePercent: changePercent(price: price.lastPrice, baseline: previousCloses[price.symbol]),
                     currency: price.currency,
@@ -184,7 +218,8 @@ final class TossInvestMarketDataClient {
             throw TossInvestMarketDataError.invalidResponse
         }
 
-        let series = try await fetchIntradaySeries(symbol: price.symbol, token: token)
+        let tradingVenue = tradingVenue(for: price.symbol, market: stockInfo?.market)
+        let series = try await fetchIntradaySeries(symbol: price.symbol, token: token, venue: tradingVenue)
         let dailyCandles = (try? await fetchDailyCandlePage(symbol: price.symbol, token: token).candles) ?? []
         let changePercent = changePercent(
             price: price.lastPrice,
@@ -193,6 +228,7 @@ final class TossInvestMarketDataClient {
         let quote = StockQuote(
             symbol: price.symbol,
             displayName: stockInfo?.localizedDisplayName,
+            exchangeLabel: series.trackingExchangeLabel ?? marketLabel(for: stockInfo?.market, symbol: price.symbol),
             price: price.lastPrice,
             changePercent: changePercent,
             currency: price.currency,
@@ -281,7 +317,7 @@ final class TossInvestMarketDataClient {
         return try decoder.decode(StockInfoEnvelope.self, from: data).result
     }
 
-    private func fetchIntradaySeries(symbol: String, token: String) async throws -> StockChartSeries {
+    private func fetchIntradaySeries(symbol: String, token: String, venue: TradingVenue) async throws -> StockChartSeries {
         let firstPage = try await fetchCandlePage(
             symbol: symbol,
             token: token,
@@ -293,7 +329,11 @@ final class TossInvestMarketDataClient {
             return StockChartSeries(symbol: symbol, points: [])
         }
 
-        let (sessionStart, sessionEnd) = sessionBoundsForLatestAvailableCandles(firstPage.candles, symbol: symbol)
+        let (sessionStart, sessionEnd, sessionDividers) = sessionBoundsForLatestAvailableCandles(
+            firstPage.candles,
+            symbol: symbol,
+            venue: venue
+        )
         let candles = try await fetchSessionMinuteCandles(
             symbol: symbol,
             token: token,
@@ -308,7 +348,9 @@ final class TossInvestMarketDataClient {
             symbol: symbol,
             points: points,
             sessionStart: sessionStart,
-            sessionEnd: sessionEnd
+            sessionEnd: sessionEnd,
+            sessionDividers: sessionDividers,
+            trackingExchangeLabel: latestTrackingExchangeLabel(in: sessionCandles)
         )
     }
 
@@ -399,9 +441,8 @@ final class TossInvestMarketDataClient {
             return sortedCandles.dropFirst().first?.closePrice ?? sortedCandles.first?.closePrice
         }
 
-        let marketKind = StockSymbolInput.marketKind(for: price.symbol)
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = Self.marketTimeZone(for: marketKind)
+        calendar.timeZone = Self.marketTimeZone(for: .krx)
         let priceDay = calendar.startOfDay(for: priceTimestamp)
 
         if let previousTradingDayCandle = sortedCandles.first(where: {
@@ -420,41 +461,85 @@ final class TossInvestMarketDataClient {
 
     private func sessionBoundsForLatestAvailableCandles(
         _ candles: [CandleResponse],
-        symbol: String
-    ) -> (start: Date, end: Date) {
+        symbol: String,
+        venue: TradingVenue
+    ) -> (start: Date, end: Date, dividers: [Date]) {
         let sortedCandles = candles.sorted { $0.timestamp > $1.timestamp }
-        if let regularSessionCandle = sortedCandles.first(where: {
-            let bounds = regularSessionBounds(for: symbol, on: $0.timestamp)
-            return $0.timestamp >= bounds.start && $0.timestamp <= bounds.end
-        }) {
-            return regularSessionBounds(for: symbol, on: regularSessionCandle.timestamp)
+        guard let latestCandle = sortedCandles.first else {
+            return tradingSessionBounds(for: symbol, venue: venue, on: Date())
         }
 
-        guard let latestCandle = sortedCandles.first else {
-            return regularSessionBounds(for: symbol, on: Date())
+        let sessionWindows = tradingSessionWindows(for: symbol, venue: venue, on: latestCandle.timestamp)
+        let activeWindows = sessionWindows.filter { window in
+            sortedCandles.contains(where: { $0.timestamp >= window.start && $0.timestamp <= window.end })
         }
-        return regularSessionBounds(for: symbol, on: latestCandle.timestamp)
+
+        guard !activeWindows.isEmpty else {
+            return tradingSessionBounds(for: symbol, venue: venue, on: latestCandle.timestamp)
+        }
+
+        return (
+            start: activeWindows.first!.start,
+            end: activeWindows.last!.end,
+            dividers: activeWindows.dropLast().compactMap(\.dividerAfter)
+        )
     }
 
-    private func regularSessionBounds(for symbol: String, on date: Date) -> (start: Date, end: Date) {
-        let marketKind = StockSymbolInput.marketKind(for: symbol)
+    private func tradingSessionBounds(for symbol: String, venue: TradingVenue, on date: Date) -> (start: Date, end: Date, dividers: [Date]) {
+        let windows = tradingSessionWindows(for: symbol, venue: venue, on: date)
+        guard let firstWindow = windows.first, let lastWindow = windows.last else {
+            return (date, date, [])
+        }
+
+        return (
+            start: firstWindow.start,
+            end: lastWindow.end,
+            dividers: windows.dropLast().compactMap(\.dividerAfter)
+        )
+    }
+
+    private func tradingSessionWindows(for symbol: String, venue: TradingVenue, on date: Date) -> [TradingSessionWindow] {
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = Self.marketTimeZone(for: marketKind)
+        calendar.timeZone = Self.marketTimeZone(for: venue)
 
-        let sessionStart = Self.sessionDate(
-            matching: date,
-            hour: marketKind == .krx ? 9 : 9,
-            minute: marketKind == .krx ? 0 : 30,
-            calendar: calendar
-        )
-        let sessionEnd = Self.sessionDate(
-            matching: date,
-            hour: marketKind == .krx ? 15 : 16,
-            minute: marketKind == .krx ? 30 : 0,
-            calendar: calendar
-        )
+        switch venue {
+        case .krx:
+            let regularStart = Self.sessionDate(matching: date, hour: 9, minute: 0, calendar: calendar)
+            let regularEnd = Self.sessionDate(matching: date, hour: 15, minute: 30, calendar: calendar)
+            return [
+                TradingSessionWindow(start: regularStart, end: regularEnd, dividerAfter: nil)
+            ]
+        case .nxt:
+            let preStart = Self.sessionDate(matching: date, hour: 8, minute: 0, calendar: calendar)
+            let preEnd = Self.sessionDate(matching: date, hour: 8, minute: 50, calendar: calendar)
+            let regularStart = Self.sessionDate(matching: date, hour: 9, minute: 0, second: 30, calendar: calendar)
+            let regularEnd = Self.sessionDate(matching: date, hour: 15, minute: 20, calendar: calendar)
+            let afterStart = Self.sessionDate(matching: date, hour: 15, minute: 40, calendar: calendar)
+            let afterEnd = Self.sessionDate(matching: date, hour: 20, minute: 0, calendar: calendar)
+            return [
+                TradingSessionWindow(start: preStart, end: preEnd, dividerAfter: preEnd),
+                TradingSessionWindow(start: regularStart, end: regularEnd, dividerAfter: afterStart),
+                TradingSessionWindow(start: afterStart, end: afterEnd, dividerAfter: nil)
+            ]
+        case .us:
+            let extendedStart = Self.sessionDate(matching: date, hour: 4, minute: 0, calendar: calendar)
+            let regularOpen = Self.sessionDate(matching: date, hour: 9, minute: 30, calendar: calendar)
+            let regularClose = Self.sessionDate(matching: date, hour: 16, minute: 0, calendar: calendar)
+            let extendedEnd = Self.sessionDate(matching: date, hour: 20, minute: 0, calendar: calendar)
+            return [
+                TradingSessionWindow(start: extendedStart, end: regularOpen, dividerAfter: regularOpen),
+                TradingSessionWindow(start: regularOpen, end: regularClose, dividerAfter: regularClose),
+                TradingSessionWindow(start: regularClose, end: extendedEnd, dividerAfter: nil)
+            ]
+        }
+    }
 
-        return (sessionStart, sessionEnd)
+    private func latestTrackingExchangeLabel(in candles: [CandleResponse]) -> String? {
+        candles
+            .sorted { $0.timestamp > $1.timestamp }
+            .lazy
+            .compactMap(\.trackingExchangeLabel)
+            .first
     }
 
     private func aggregateTenMinuteCandles(
@@ -491,20 +576,55 @@ final class TossInvestMarketDataClient {
         }
     }
 
-    private static func marketTimeZone(for marketKind: StockSymbolInput.MarketKind) -> TimeZone {
-        switch marketKind {
-        case .krx:
+    private static func marketTimeZone(for venue: TradingVenue) -> TimeZone {
+        switch venue {
+        case .krx, .nxt:
             return TimeZone(identifier: "Asia/Seoul") ?? .current
         case .us:
             return TimeZone(identifier: "America/New_York") ?? .current
         }
     }
 
-    private static func sessionDate(matching date: Date, hour: Int, minute: Int, calendar: Calendar) -> Date {
+    private func tradingVenue(for symbol: String, market: String?) -> TradingVenue {
+        let marketName = market?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() ?? ""
+        if marketName.contains("NXT") {
+            return .nxt
+        }
+
+        switch StockSymbolInput.marketKind(for: symbol) {
+        case .krx:
+            return .krx
+        case .us:
+            return .us
+        }
+    }
+
+    private func marketLabel(for market: String?, symbol: String) -> String? {
+        if let label = Self.normalizedExchangeLabel(from: market) {
+            return label
+        }
+
+        return StockSymbolInput.marketKind(for: symbol) == .krx ? "KRX" : "US"
+    }
+
+    private static func normalizedExchangeLabel(from value: String?) -> String? {
+        guard let value else { return nil }
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard !normalized.isEmpty else { return nil }
+        if normalized.contains("NXT") {
+            return "NXT"
+        }
+        if normalized.contains("KRX") {
+            return "KRX"
+        }
+        return normalized
+    }
+
+    private static func sessionDate(matching date: Date, hour: Int, minute: Int, second: Int = 0, calendar: Calendar) -> Date {
         calendar.date(
             bySettingHour: hour,
             minute: minute,
-            second: 0,
+            second: second,
             of: date
         ) ?? date
     }
