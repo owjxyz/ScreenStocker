@@ -75,6 +75,41 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["1m"], 4)
     }
 
+    func testKRXIntradaySeriesMatchesTossTenMinuteChartBoundaries() async throws {
+        let defaults = UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID().uuidString)")!
+        let cacheStore = StockChartSeriesCacheStore(defaults: defaults)
+        let session = Self.makeSession()
+        let marketTimeZone = TimeZone(identifier: "Asia/Seoul")!
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = marketTimeZone
+        let today = calendar.startOfDay(for: Date())
+        let sessionStart = calendar.date(byAdding: .hour, value: 8, to: today)!
+        let client = TossInvestMarketDataClient(
+            credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
+            session: session,
+            chartSeriesCacheStore: cacheStore
+        )
+        let sessionMinuteTimestamps = Self.krxSessionMinuteTimestamps(on: today, calendar: calendar)
+            .sorted(by: >)
+        MockTossInvestURLProtocol.candle1mResponses = stride(from: 0, to: sessionMinuteTimestamps.count, by: 200).map { offset in
+            let pageTimestamps = Array(sessionMinuteTimestamps[offset..<min(offset + 200, sessionMinuteTimestamps.count)])
+            let nextBefore = pageTimestamps.last.map { $0.addingTimeInterval(-1) }
+            return Self.makeCandlePageData(
+                candles: Self.candles(pageTimestamps),
+                nextBefore: offset + 200 < sessionMinuteTimestamps.count ? nextBefore : nil
+            )
+        }
+        MockTossInvestURLProtocol.candle1dResponse = Self.makeDailyCandlePageData()
+
+        let snapshot = try await client.snapshot(for: "005930")
+        let pointTimes = snapshot.series.points.map(\.date)
+
+        XCTAssertEqual(pointTimes.count, 72)
+        XCTAssertEqual(pointTimes.first, sessionStart.addingTimeInterval(10 * 60))
+        XCTAssertEqual(pointTimes.last, sessionStart.addingTimeInterval(12 * 60 * 60))
+        XCTAssertFalse(pointTimes.contains(sessionStart))
+    }
+
     private static func makeSession() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockTossInvestURLProtocol.self]
@@ -112,6 +147,47 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
                 "exchange": "KRX",
                 "venue": "KRX"
             ]
+        }
+    }
+
+    private static func krxSessionMinuteTimestamps(on dayStart: Date, calendar: Calendar) -> [Date] {
+        var timestamps: [Date] = []
+        appendMinuteTimestamps(
+            to: &timestamps,
+            dayStart: dayStart,
+            calendar: calendar,
+            startMinute: 8 * 60,
+            endMinute: 8 * 60 + 50
+        )
+        appendMinuteTimestamps(
+            to: &timestamps,
+            dayStart: dayStart,
+            calendar: calendar,
+            startMinute: 9 * 60,
+            endMinute: 15 * 60 + 30
+        )
+        appendMinuteTimestamps(
+            to: &timestamps,
+            dayStart: dayStart,
+            calendar: calendar,
+            startMinute: 15 * 60 + 40,
+            endMinute: 20 * 60
+        )
+        return timestamps
+    }
+
+    private static func appendMinuteTimestamps(
+        to timestamps: inout [Date],
+        dayStart: Date,
+        calendar: Calendar,
+        startMinute: Int,
+        endMinute: Int
+    ) {
+        for minuteOffset in startMinute...endMinute {
+            guard let timestamp = calendar.date(byAdding: .minute, value: minuteOffset, to: dayStart) else {
+                continue
+            }
+            timestamps.append(timestamp)
         }
     }
 

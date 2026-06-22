@@ -644,8 +644,8 @@ final class TossInvestMarketDataClient {
     ) -> [StockTimeSeriesPoint] {
         guard !candles.isEmpty else { return [] }
 
-        let groupedCandles = Dictionary(grouping: candles) { candle in
-            Int(candle.timestamp.timeIntervalSince(sessionStart) / 600)
+        let groupedCandles = Dictionary(grouping: candles.filter { $0.timestamp > sessionStart }) { candle in
+            Int(ceil(candle.timestamp.timeIntervalSince(sessionStart) / 600))
         }
 
         return groupedCandles.keys.sorted().compactMap { bucket in
@@ -663,7 +663,7 @@ final class TossInvestMarketDataClient {
                 .min() ?? min(first.openPrice, last.closePrice)
 
             return StockTimeSeriesPoint(
-                date: first.timestamp,
+                date: sessionStart.addingTimeInterval(TimeInterval(bucket * 600)),
                 open: first.openPrice,
                 high: high,
                 low: low,
