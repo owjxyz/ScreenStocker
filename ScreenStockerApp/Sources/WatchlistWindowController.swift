@@ -1252,14 +1252,11 @@ private struct PreviewCard: View {
                             .padding(.horizontal, 10)
                             .padding(.vertical, 5)
                             .background(palette.badgeBackground, in: Capsule())
-                        Text(updatedText)
-                            .font(.caption)
-                            .foregroundStyle(palette.tertiaryText)
                     }
 
                     Spacer()
 
-                    Text("Market snapshot")
+                    Text(updatedText)
                         .font(.caption)
                         .foregroundStyle(palette.secondaryText)
                 }

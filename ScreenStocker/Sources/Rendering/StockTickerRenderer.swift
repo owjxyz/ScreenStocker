@@ -172,14 +172,11 @@ private struct StockTickerScreenView: View {
                     HStack(spacing: 22) {
                         VStack(alignment: .leading, spacing: 10) {
                             StatusBadge(title: exchangeLabelText, palette: palette)
-                            Text(updatedText)
-                                .font(.caption)
-                                .foregroundStyle(palette.tertiaryText)
                         }
 
                         Spacer()
 
-                        Text("Market snapshot")
+                        Text(updatedText)
                             .font(.caption)
                             .foregroundStyle(palette.secondaryText)
                     }
