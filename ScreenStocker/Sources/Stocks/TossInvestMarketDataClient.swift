@@ -371,7 +371,8 @@ final class TossInvestMarketDataClient {
         let cachedEntry = chartSeriesCacheStore.entry(
             for: symbol,
             dayIdentifier: dayIdentifier,
-            timeZoneIdentifier: marketTimeZone.identifier
+            timeZoneIdentifier: marketTimeZone.identifier,
+            referenceDate: latestCandleTimestamp
         )
 
         if let cachedEntry, cachedEntry.isComplete {
@@ -381,7 +382,8 @@ final class TossInvestMarketDataClient {
                 isComplete: true,
                 for: symbol,
                 dayIdentifier: dayIdentifier,
-                timeZoneIdentifier: marketTimeZone.identifier
+                timeZoneIdentifier: marketTimeZone.identifier,
+                referenceDate: latestCandleTimestamp
             )
             return makeIntradaySeries(
                 symbol: symbol,
@@ -403,7 +405,8 @@ final class TossInvestMarketDataClient {
             isComplete: true,
             for: symbol,
             dayIdentifier: dayIdentifier,
-            timeZoneIdentifier: marketTimeZone.identifier
+            timeZoneIdentifier: marketTimeZone.identifier,
+            referenceDate: latestCandleTimestamp
         )
 
         return makeIntradaySeries(
