@@ -65,6 +65,49 @@ private struct StockTickerPalette {
     }
 }
 
+enum StockTickerDisplayMode {
+    case screenSaver
+    case preview
+
+    func horizontalInset(for size: CGSize) -> CGFloat {
+        switch self {
+        case .screenSaver:
+            return max(size.width * 0.07, 44)
+        case .preview:
+            return 22
+        }
+    }
+
+    func verticalInset(for size: CGSize) -> CGFloat {
+        switch self {
+        case .screenSaver:
+            return max(size.height * 0.08, 38)
+        case .preview:
+            return 22
+        }
+    }
+
+    var stackSpacing: CGFloat { self == .screenSaver ? 24 : 14 }
+    var headerSpacing: CGFloat { self == .screenSaver ? 22 : 16 }
+    var badgeHorizontalPadding: CGFloat { self == .screenSaver ? 12 : 10 }
+    var badgeVerticalPadding: CGFloat { self == .screenSaver ? 7 : 5 }
+    var metricSpacing: CGFloat { self == .screenSaver ? 22 : 16 }
+    var priceColumnSpacing: CGFloat { self == .screenSaver ? 10 : 6 }
+    var titleFontSize: CGFloat { self == .screenSaver ? 36 : 24 }
+    var priceFontSize: CGFloat { self == .screenSaver ? 82 : 44 }
+    var changeFont: Font { self == .screenSaver ? .system(size: 32, weight: .semibold) : .body.weight(.semibold) }
+    var metricValueFont: Font { self == .screenSaver ? .body.monospacedDigit().weight(.semibold) : .caption.monospacedDigit().weight(.semibold) }
+    var lineWidth: CGFloat { self == .screenSaver ? 6 : 4 }
+    var trackingPointDiameter: CGFloat { self == .screenSaver ? 18 : 10 }
+    var gridLineCount: Int { self == .screenSaver ? 4 : 3 }
+    var gridDash: [CGFloat] { self == .screenSaver ? [6, 10] : [5, 8] }
+    var candleWickWidth: CGFloat { self == .screenSaver ? 3 : 2 }
+    var candleMinimumBodyHeight: CGFloat { self == .screenSaver ? 12 : 4 }
+    var candleMinimumWickHeight: CGFloat { self == .screenSaver ? 30 : 14 }
+    var candleCornerRadius: CGFloat { self == .screenSaver ? 3 : 2 }
+    var minimumScaleFactor: CGFloat { self == .screenSaver ? 0.5 : 0.7 }
+}
+
 @MainActor
 final class StockTickerRenderer {
     private var hostingView: NSHostingView<StockTickerScreenView>?
@@ -131,16 +174,18 @@ final class StockTickerRenderer {
             quote: quote ?? StockQuote.placeholder(symbol: symbol),
             series: series ?? StockChartSeries(symbol: symbol ?? "-", points: []),
             appearanceMode: appearanceMode,
-            chartStyle: chartStyle
+            chartStyle: chartStyle,
+            displayMode: .screenSaver
         )
     }
 }
 
-private struct StockTickerScreenView: View {
+struct StockTickerScreenView: View {
     let quote: StockQuote
     let series: StockChartSeries
     let appearanceMode: ScreenSaverAppearanceMode
     let chartStyle: ScreenSaverChartStyle
+    var displayMode: StockTickerDisplayMode = .screenSaver
 
     @Environment(\.colorScheme) private var systemColorScheme
 
@@ -162,16 +207,16 @@ private struct StockTickerScreenView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let sideInset = max(proxy.size.width * 0.07, 44)
-            let verticalInset = max(proxy.size.height * 0.08, 38)
+            let sideInset = displayMode.horizontalInset(for: proxy.size)
+            let verticalInset = displayMode.verticalInset(for: proxy.size)
 
             ZStack {
                 palette.background.ignoresSafeArea()
 
-                VStack(alignment: .leading, spacing: 24) {
-                    HStack(spacing: 22) {
+                VStack(alignment: .leading, spacing: displayMode.stackSpacing) {
+                    HStack(spacing: displayMode.headerSpacing) {
                         VStack(alignment: .leading, spacing: 10) {
-                            StatusBadge(title: exchangeLabelText, palette: palette)
+                            StatusBadge(title: exchangeLabelText, palette: palette, displayMode: displayMode)
                         }
 
                         Spacer()
@@ -183,50 +228,62 @@ private struct StockTickerScreenView: View {
 
                     switch chartStyle {
                     case .line:
-                        SaverLineChart(series: series, lineColor: accentColor, gridColor: palette.grid)
+                        SaverLineChart(
+                            series: series,
+                            lineColor: accentColor,
+                            gridColor: palette.grid,
+                            displayMode: displayMode
+                        )
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     case .candlestick:
-                        SaverCandlestickChart(series: series, gridColor: palette.grid)
+                        SaverCandlestickChart(
+                            series: series,
+                            gridColor: palette.grid,
+                            displayMode: displayMode
+                        )
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
 
                     HStack(alignment: .bottom) {
-                        HStack(spacing: 22) {
+                        HStack(spacing: displayMode.metricSpacing) {
                             MetricBlock(
                                 title: "Open",
                                 value: StockQuote.currencyText(for: series.openingPrice ?? quote.price, currency: quote.currency),
-                                palette: palette
+                                palette: palette,
+                                displayMode: displayMode
                             )
                             MetricBlock(
                                 title: "High",
                                 value: StockQuote.currencyText(for: series.highClose ?? quote.price, currency: quote.currency),
-                                palette: palette
+                                palette: palette,
+                                displayMode: displayMode
                             )
                             MetricBlock(
                                 title: "Low",
                                 value: StockQuote.currencyText(for: series.lowClose ?? quote.price, currency: quote.currency),
-                                palette: palette
+                                palette: palette,
+                                displayMode: displayMode
                             )
                         }
 
                         Spacer()
 
-                        VStack(alignment: .trailing, spacing: 10) {
+                        VStack(alignment: .trailing, spacing: displayMode.priceColumnSpacing) {
                             Text(quote.titleText)
-                                .font(.system(size: 36, weight: .semibold))
+                                .font(.system(size: displayMode.titleFontSize, weight: .semibold))
                                 .foregroundStyle(palette.primaryText)
                                 .lineLimit(1)
-                                .minimumScaleFactor(0.5)
+                                .minimumScaleFactor(displayMode.minimumScaleFactor)
 
                             Text(quote.priceText)
-                                .font(.system(size: 82, weight: .bold))
+                                .font(.system(size: displayMode.priceFontSize, weight: .bold))
                                 .foregroundStyle(palette.primaryText)
                                 .monospacedDigit()
-                                .minimumScaleFactor(0.5)
+                                .minimumScaleFactor(displayMode.minimumScaleFactor)
                                 .lineLimit(1)
 
                             Text(quote.changePercentText)
-                                .font(.system(size: 32, weight: .semibold))
+                                .font(displayMode.changeFont)
                                 .foregroundStyle(accentColor)
                         }
                     }
@@ -257,6 +314,7 @@ private struct SaverLineChart: View {
     let series: StockChartSeries
     let lineColor: Color
     let gridColor: Color
+    let displayMode: StockTickerDisplayMode
 
     var body: some View {
         GeometryReader { proxy in
@@ -273,10 +331,13 @@ private struct SaverLineChart: View {
                         path.addCurve(to: segment.end, control1: segment.control1, control2: segment.control2)
                     }
                 }
-                .stroke(lineColor, style: StrokeStyle(lineWidth: 6, lineCap: .round, lineJoin: .round))
+                .stroke(
+                    lineColor,
+                    style: StrokeStyle(lineWidth: displayMode.lineWidth, lineCap: .round, lineJoin: .round)
+                )
 
                 if let trackingPoint = points.last {
-                    TrackingPointMarker(color: lineColor, diameter: 18)
+                    TrackingPointMarker(color: lineColor, diameter: displayMode.trackingPointDiameter)
                         .position(trackingPoint)
                 }
             }
@@ -285,13 +346,14 @@ private struct SaverLineChart: View {
 
     private func horizontalGrid(in size: CGSize) -> some View {
         Path { path in
-            for index in 0..<4 {
-                let y = CGFloat(index) / 3 * size.height
+            let divisor = max(CGFloat(displayMode.gridLineCount - 1), 1)
+            for index in 0..<displayMode.gridLineCount {
+                let y = CGFloat(index) / divisor * size.height
                 path.move(to: CGPoint(x: 0, y: y))
                 path.addLine(to: CGPoint(x: size.width, y: y))
             }
         }
-        .stroke(gridColor, style: StrokeStyle(lineWidth: 1, dash: [6, 10]))
+        .stroke(gridColor, style: StrokeStyle(lineWidth: 1, dash: displayMode.gridDash))
     }
 
     private func verticalSessionGrid(in size: CGSize) -> some View {
@@ -301,7 +363,7 @@ private struct SaverLineChart: View {
                 path.addLine(to: CGPoint(x: x, y: size.height))
             }
         }
-        .stroke(gridColor, style: StrokeStyle(lineWidth: 1, dash: [6, 10]))
+        .stroke(gridColor, style: StrokeStyle(lineWidth: 1, dash: displayMode.gridDash))
     }
 
     private func normalizedPoints(in size: CGSize) -> [CGPoint] {
@@ -347,6 +409,7 @@ private struct TrackingPointMarker: View {
 private struct SaverCandlestickChart: View {
     let series: StockChartSeries
     let gridColor: Color
+    let displayMode: StockTickerDisplayMode
 
     var body: some View {
         GeometryReader { proxy in
@@ -358,15 +421,18 @@ private struct SaverCandlestickChart: View {
 
                 ForEach(Array(candles.enumerated()), id: \.offset) { _, candle in
                     let candleColor: Color = candle.closeY <= candle.openY ? .red : .blue
-                    let bodyHeight = max(abs(candle.closeY - candle.openY), 12)
+                    let bodyHeight = max(abs(candle.closeY - candle.openY), displayMode.candleMinimumBodyHeight)
                     let candleWidth = StockChartGeometry.recommendedCandleWidth(for: series, in: proxy.size)
 
                     Group {
                         Rectangle()
                             .fill(candleColor.opacity(0.78))
-                            .frame(width: 3, height: max(candle.lowY - candle.highY, 30))
+                            .frame(
+                                width: displayMode.candleWickWidth,
+                                height: max(candle.lowY - candle.highY, displayMode.candleMinimumWickHeight)
+                            )
                             .position(x: candle.x, y: (candle.highY + candle.lowY) / 2)
-                        RoundedRectangle(cornerRadius: 3)
+                        RoundedRectangle(cornerRadius: displayMode.candleCornerRadius)
                             .fill(candleColor)
                             .frame(width: candleWidth, height: bodyHeight)
                             .position(x: candle.x, y: (candle.openY + candle.closeY) / 2)
@@ -378,13 +444,14 @@ private struct SaverCandlestickChart: View {
 
     private func horizontalGrid(in size: CGSize) -> some View {
         Path { path in
-            for index in 0..<4 {
-                let y = CGFloat(index) / 3 * size.height
+            let divisor = max(CGFloat(displayMode.gridLineCount - 1), 1)
+            for index in 0..<displayMode.gridLineCount {
+                let y = CGFloat(index) / divisor * size.height
                 path.move(to: CGPoint(x: 0, y: y))
                 path.addLine(to: CGPoint(x: size.width, y: y))
             }
         }
-        .stroke(gridColor, style: StrokeStyle(lineWidth: 1, dash: [6, 10]))
+        .stroke(gridColor, style: StrokeStyle(lineWidth: 1, dash: displayMode.gridDash))
     }
 
     private func verticalSessionGrid(in size: CGSize) -> some View {
@@ -394,7 +461,7 @@ private struct SaverCandlestickChart: View {
                 path.addLine(to: CGPoint(x: x, y: size.height))
             }
         }
-        .stroke(gridColor, style: StrokeStyle(lineWidth: 1, dash: [6, 10]))
+        .stroke(gridColor, style: StrokeStyle(lineWidth: 1, dash: displayMode.gridDash))
     }
 
     private func normalizedCandles(in size: CGSize) -> [StockChartGeometry.CandlePoint] {
@@ -410,13 +477,14 @@ private struct SaverCandlestickChart: View {
 private struct StatusBadge: View {
     let title: String
     let palette: StockTickerPalette
+    let displayMode: StockTickerDisplayMode
 
     var body: some View {
         Text(title)
             .font(.caption.weight(.bold))
             .foregroundStyle(palette.badgeText)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
+            .padding(.horizontal, displayMode.badgeHorizontalPadding)
+            .padding(.vertical, displayMode.badgeVerticalPadding)
             .background(palette.badgeBackground, in: Capsule())
     }
 }
@@ -425,6 +493,7 @@ private struct MetricBlock: View {
     let title: String
     let value: String
     let palette: StockTickerPalette
+    let displayMode: StockTickerDisplayMode
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -432,7 +501,7 @@ private struct MetricBlock: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(palette.secondaryText)
             Text(value)
-                .font(.body.monospacedDigit().weight(.semibold))
+                .font(displayMode.metricValueFont)
                 .foregroundStyle(palette.metricText)
         }
     }

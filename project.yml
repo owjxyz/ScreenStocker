@@ -40,6 +40,7 @@ targets:
     sources:
       - path: ScreenStockerApp/Sources
       - path: ScreenStockerApp/Resources
+      - path: ScreenStocker/Sources/Rendering
       - path: ScreenStocker/Sources/Preferences
       - path: ScreenStocker/Sources/Stocks
     dependencies:
