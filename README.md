@@ -1,4 +1,8 @@
-# 📈 ScreenStocker
+<div align="center">
+  <img src="https://github.com/owjxyz/ScreenStocker/blob/main/Docs/screenstocker-dynamic-glass.svg" width="256">
+  
+  # 📈 ScreenStocker
+</div>
 
 ScreenStocker is a lightweight macOS screen saver that shows the current price status and chart for stocks you care about.
 
