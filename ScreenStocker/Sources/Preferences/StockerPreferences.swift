@@ -75,6 +75,7 @@ final class StockerPreferences {
         static let appearanceMode = "appearanceMode"
         static let chartStyle = "chartStyle"
         static let watchlistSaved = "watchlistSaved"
+        static let intradaySeriesCache = "intradaySeriesCache"
     }
 
     private static let suiteName = "com.tasokiii.ScreenStocker.preferences"
@@ -89,6 +90,7 @@ final class StockerPreferences {
     init(defaults: UserDefaults? = UserDefaults(suiteName: StockerPreferences.suiteName)) {
         self.defaults = defaults ?? .standard
         migrateLegacyDefaultsIfNeeded()
+        removeMarketDataCacheFromPreferencesIfNeeded()
         repairStoredValuesIfNeeded()
         mirrorSharedPreferences()
     }
@@ -242,6 +244,37 @@ final class StockerPreferences {
         }
     }
 
+    private func removeMarketDataCacheFromPreferencesIfNeeded() {
+        var didRemove = false
+
+        if defaults.object(forKey: Key.intradaySeriesCache) != nil {
+            defaults.removeObject(forKey: Key.intradaySeriesCache)
+            didRemove = true
+        }
+
+        if legacyDefaults?.object(forKey: Key.intradaySeriesCache) != nil {
+            legacyDefaults?.removeObject(forKey: Key.intradaySeriesCache)
+            legacyDefaults?.synchronize()
+        }
+
+        for legacySuiteDefault in legacySuiteDefaults where legacySuiteDefault.object(forKey: Key.intradaySeriesCache) != nil {
+            legacySuiteDefault.removeObject(forKey: Key.intradaySeriesCache)
+            legacySuiteDefault.synchronize()
+        }
+
+        for url in Self.sharedPreferenceURLs() {
+            Self.updatePreferenceFile(at: url) { preferences in
+                if preferences.removeValue(forKey: Key.intradaySeriesCache) != nil {
+                    didRemove = true
+                }
+            }
+        }
+
+        if didRemove {
+            syncDefaults()
+        }
+    }
+
     private func syncDefaults() {
         defaults.synchronize()
     }
@@ -294,6 +327,12 @@ final class StockerPreferences {
                 preferences[Key.watchlistSaved] = true
             }
         }
+    }
+
+    private static func sharedPreferenceURLs() -> [URL] {
+        var seen = Set<String>()
+        return (hostPreferenceURLs + screenSaverPreferenceURLs())
+            .filter { seen.insert($0.standardizedFileURL.path).inserted }
     }
 
     private static func screenSaverPreferenceURLs() -> [URL] {

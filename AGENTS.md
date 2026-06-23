@@ -13,7 +13,7 @@ The goal of this project is to build a lightweight, maintainable stock-status sc
 ## Product Direction
 
 - ScreenStocker displays stock price status and market visualizations for selected symbols inside a macOS screen saver.
-- The screen saver refreshes stock quotes and any visualization data every 5 minutes.
+- The screen saver refreshes stock quotes and any visualization data every 1 minute.
 - The symbol shown in the screen saver is selected in the management app, not in the screen saver configuration sheet.
 - The selectable symbol list is based on a watchlist prepared in a separate management app.
 - The management app owns preparation tasks such as adding and removing watchlist items, choosing the displayed symbol, searching symbols, and storing API credentials.
@@ -24,7 +24,7 @@ The goal of this project is to build a lightweight, maintainable stock-status sc
 - Prefer SwiftUI. Screens, configuration UI, state presentation, lists, and visualization-adjacent layout should use native SwiftUI components whenever practical.
 - Keep AppKit or ScreenSaver.framework entry points as thin adapters where they are required, and separate actual UI and state logic into SwiftUI views and independent models.
 - Do not add external packages when Apple native frameworks are sufficient.
-- Keep rendering simple and predictable. This is a financial data screen that refreshes every 5 minutes, so avoid expensive animations, complex real-time render loops, and unnecessary background work.
+- Keep rendering simple and predictable. This is a financial data screen that refreshes every 1 minute, so avoid expensive animations, complex real-time render loops, and unnecessary background work.
 - Separate responsibilities for networking, persistence, screen rendering, and configuration UI.
 - The screen saver may run for long periods, so be especially careful about memory growth, duplicated timers, and leaked network requests.
 
@@ -41,7 +41,7 @@ The goal of this project is to build a lightweight, maintainable stock-status sc
 
 ## Data Refresh Rules
 
-- The stock quote and market visualization data refresh interval is 5 minutes.
+- The stock quote and market visualization data refresh interval is 1 minute.
 - Refresh immediately when the screen saver starts if a selected symbol is available.
 - Avoid overlapping requests. If a previous refresh is still running, do not start another request for the same symbol.
 - Cancel refresh work when the screen saver stops animating or is deallocated.
@@ -84,7 +84,7 @@ The goal of this project is to build a lightweight, maintainable stock-status sc
 
 - Network failures should not blank the screen if previous data exists.
 - Missing credentials, empty watchlist, invalid selected symbol, and provider errors should be distinct states.
-- Log useful diagnostics during development, but avoid noisy repeated logs during the 5-minute refresh loop.
+- Log useful diagnostics during development, but avoid noisy repeated logs during the 1-minute refresh loop.
 - Never expose API secrets in logs, UI, crash messages, or test fixtures.
 
 ## Testing And Verification
@@ -101,11 +101,11 @@ The goal of this project is to build a lightweight, maintainable stock-status sc
 
 - Use plain `./Scripts/build.sh` only when a compile check is sufficient and no installed app or screen saver host needs to be refreshed.
 
-- If changing screen saver lifecycle or timer behavior, manually verify that refresh starts, repeats every 5 minutes, and stops cleanly when the saver is closed.
+- If changing screen saver lifecycle or timer behavior, manually verify that refresh starts, repeats every 1 minute, and stops cleanly when the saver is closed.
 
 ## Non-Goals
 
 - Do not introduce a heavy cross-platform UI framework.
 - Do not add a database unless watchlist and settings requirements outgrow simple shared preferences.
-- Do not build a high-frequency trading dashboard. The intended cadence is a calm screen saver that updates every 5 minutes.
+- Do not build a high-frequency trading dashboard. The intended cadence is a calm screen saver that updates every 1 minute.
 - Do not make the screen saver configuration responsible for watchlist management or symbol selection unless the product direction changes.

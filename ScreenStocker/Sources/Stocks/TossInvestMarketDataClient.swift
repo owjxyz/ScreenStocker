@@ -251,8 +251,12 @@ final class TossInvestMarketDataClient {
         }
 
         let tradingVenue = tradingVenue(for: price.symbol, market: stockInfo?.market)
-        let series = try await fetchIntradaySeries(symbol: price.symbol, token: token, venue: tradingVenue)
         let dailyCandles = (try? await fetchDailyCandlePage(symbol: price.symbol, token: token).candles) ?? []
+        let series = await intradaySeriesForSnapshot(
+            symbol: price.symbol,
+            token: token,
+            venue: tradingVenue
+        )
         let changePercent = changePercent(
             price: price.lastPrice,
             baseline: previousClose(for: price, dailyCandles: dailyCandles)
@@ -267,6 +271,22 @@ final class TossInvestMarketDataClient {
             timestamp: price.timestamp
         )
         return StockMarketSnapshot(quote: quote, series: series)
+    }
+
+    private func intradaySeriesForSnapshot(
+        symbol: String,
+        token: String,
+        venue: TradingVenue
+    ) async -> StockChartSeries {
+        if let series = try? await fetchIntradaySeries(symbol: symbol, token: token, venue: venue) {
+            return series
+        }
+
+        if let cachedSeries = cachedActiveIntradaySeries(symbol: symbol, venue: venue) {
+            return cachedSeries
+        }
+
+        return StockChartSeries(symbol: symbol, points: [])
     }
 
     func snapshots(for symbols: [String]) async throws -> [String: StockMarketSnapshot] {
@@ -440,6 +460,22 @@ final class TossInvestMarketDataClient {
             sessionEnd: sessionEnd,
             sessionDividers: sessionDividers,
             trackingExchangeLabel: latestTrackingExchangeLabel(in: filteredCandles)
+        )
+    }
+
+    private func cachedActiveIntradaySeries(symbol: String, venue: TradingVenue) -> StockChartSeries? {
+        let marketTimeZone = Self.marketTimeZone(for: venue)
+        guard let cachedEntry = chartSeriesCacheStore.activeSessionEntry(
+            for: symbol,
+            timeZoneIdentifier: marketTimeZone.identifier
+        ) else {
+            return nil
+        }
+
+        return makeIntradaySeries(
+            symbol: symbol,
+            venue: venue,
+            candles: cachedEntry.candles
         )
     }
 

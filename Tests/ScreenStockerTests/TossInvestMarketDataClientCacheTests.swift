@@ -110,6 +110,27 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         XCTAssertFalse(pointTimes.contains(sessionStart))
     }
 
+    func testUSSnapshotReturnsQuoteWhenIntradayCandlesAreUnavailable() async throws {
+        let defaults = UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID().uuidString)")!
+        let cacheStore = StockChartSeriesCacheStore(defaults: defaults)
+        let session = Self.makeSession()
+        let client = TossInvestMarketDataClient(
+            credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
+            session: session,
+            chartSeriesCacheStore: cacheStore
+        )
+
+        MockTossInvestURLProtocol.candle1mResponses = []
+        MockTossInvestURLProtocol.candle1dResponse = Self.makeDailyCandlePageData()
+
+        let snapshot = try await client.snapshot(for: "AAPL")
+
+        XCTAssertEqual(snapshot.quote.symbol, "AAPL")
+        XCTAssertEqual(snapshot.quote.exchangeLabel, "NASDAQ")
+        XCTAssertEqual(snapshot.quote.price, Decimal(string: "212.45"))
+        XCTAssertTrue(snapshot.series.points.isEmpty)
+    }
+
     private static func makeSession() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockTossInvestURLProtocol.self]
@@ -135,7 +156,13 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         return try! JSONSerialization.data(withJSONObject: ["result": ["candles": candles]], options: [])
     }
 
-    private static func candles(_ timestamps: [Date], closePrice: [String]? = nil) -> [[String: String]] {
+    private static func candles(
+        _ timestamps: [Date],
+        closePrice: [String]? = nil,
+        market: String = "KRX",
+        exchange: String = "KRX",
+        venue: String = "KRX"
+    ) -> [[String: String]] {
         timestamps.enumerated().map { index, timestamp in
             [
                 "timestamp": isoFormatter.string(from: timestamp),
@@ -143,9 +170,9 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
                 "highPrice": "101",
                 "lowPrice": "99",
                 "closePrice": closePrice?[safe: index] ?? "100",
-                "market": "KRX",
-                "exchange": "KRX",
-                "venue": "KRX"
+                "market": market,
+                "exchange": exchange,
+                "venue": venue
             ]
         }
     }
@@ -228,9 +255,9 @@ private final class MockTossInvestURLProtocol: URLProtocol {
         case "/oauth2/token":
             response = Self.tokenResponse()
         case "/api/v1/stocks":
-            response = Self.stockInfoResponse()
+            response = Self.stockInfoResponse(for: Self.requestedSymbol(from: url))
         case "/api/v1/prices":
-            response = Self.priceResponse()
+            response = Self.priceResponse(for: Self.requestedSymbol(from: url))
         case "/api/v1/candles":
             let interval = URLComponents(url: url, resolvingAgainstBaseURL: false)?
                 .queryItems?
@@ -268,32 +295,44 @@ private final class MockTossInvestURLProtocol: URLProtocol {
         try! JSONSerialization.data(withJSONObject: ["access_token": "token"], options: [])
     }
 
-    private static func stockInfoResponse() -> Data {
-        try! JSONSerialization.data(withJSONObject: [
+    private static func stockInfoResponse(for symbol: String) -> Data {
+        let isUSSymbol = StockSymbolInput.marketKind(for: symbol) == .us
+        return try! JSONSerialization.data(withJSONObject: [
             "result": [
                 [
-                    "symbol": "005930",
-                    "name": "삼성전자",
-                    "englishName": "Samsung Electronics",
-                    "market": "KRX",
+                    "symbol": symbol,
+                    "name": isUSSymbol ? "Apple" : "삼성전자",
+                    "englishName": isUSSymbol ? "Apple" : "Samsung Electronics",
+                    "market": isUSSymbol ? "NASDAQ" : "KRX",
                     "status": "ACTIVE",
-                    "currency": "KRW"
+                    "currency": isUSSymbol ? "USD" : "KRW"
                 ]
             ]
         ], options: [])
     }
 
-    private static func priceResponse() -> Data {
-        try! JSONSerialization.data(withJSONObject: [
+    private static func priceResponse(for symbol: String) -> Data {
+        let isUSSymbol = StockSymbolInput.marketKind(for: symbol) == .us
+        return try! JSONSerialization.data(withJSONObject: [
             "result": [
                 [
-                    "symbol": "005930",
-                    "timestamp": "2024-06-22T10:59:00+09:00",
-                    "lastPrice": "70000",
-                    "currency": "KRW"
+                    "symbol": symbol,
+                    "timestamp": isUSSymbol ? "2026-06-22T20:00:00-04:00" : "2024-06-22T10:59:00+09:00",
+                    "lastPrice": isUSSymbol ? "212.45" : "70000",
+                    "currency": isUSSymbol ? "USD" : "KRW"
                 ]
             ]
         ], options: [])
+    }
+
+    private static func requestedSymbol(from url: URL) -> String {
+        URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?
+            .first(where: { $0.name == "symbols" || $0.name == "symbol" })?
+            .value?
+            .split(separator: ",")
+            .first
+            .map(String.init) ?? "005930"
     }
 }
 

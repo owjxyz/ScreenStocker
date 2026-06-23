@@ -24,7 +24,7 @@ final class StockChartSeriesCacheStore {
         static let intradaySeriesCache = "intradaySeriesCache"
     }
 
-    private static let suiteName = "com.tasokiii.ScreenStocker.preferences"
+    private static let suiteName = "com.tasokiii.ScreenStocker.marketDataCache"
 
     private let defaults: UserDefaults
 
@@ -47,6 +47,23 @@ final class StockChartSeriesCacheStore {
             return nil
         }
         return entry
+    }
+
+    func activeSessionEntry(
+        for symbol: String,
+        timeZoneIdentifier: String,
+        referenceDate: Date = Date()
+    ) -> IntradaySeriesCacheEntry? {
+        guard let timeZone = TimeZone(identifier: timeZoneIdentifier) else {
+            return nil
+        }
+
+        return entry(
+            for: symbol,
+            dayIdentifier: Self.activeSessionDayIdentifier(for: referenceDate, timeZone: timeZone),
+            timeZoneIdentifier: timeZoneIdentifier,
+            referenceDate: referenceDate
+        )
     }
 
     func save(

@@ -109,7 +109,10 @@ final class ScreenStockerView: ScreenSaverView {
     private func refreshMarketData(symbol: String) async {
         do {
             let snapshot = try await marketDataClient.snapshot(for: symbol)
-            guard !Task.isCancelled else {
+            guard !Task.isCancelled,
+                  preferences.symbolForScreenSaverDisplay == symbol,
+                  snapshot.quote.symbol == symbol,
+                  snapshot.series.symbol == symbol else {
                 return
             }
             renderer.update(snapshot: snapshot)
