@@ -1,0 +1,356 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg width="1024" height="1024" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <style>
+    :root {
+      --symbol-rim-shadow: rgb(12 15 56 / 0.36);
+      --symbol-rim-highlight: rgb(255 255 255 / 0.50);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --symbol-rim-shadow: rgb(0 0 0 / 0.34);
+        --symbol-rim-highlight: rgb(255 255 255 / 0.34);
+      }
+    }
+
+    .outer-base {
+      fill: url(#outerFillLight);
+    }
+
+    .outer-soft-shade {
+      fill: url(#outerSoftShadeLight);
+      opacity: 0.88;
+    }
+
+    .outer-top-highlight {
+      fill: url(#outerTopHighlightLight);
+      opacity: 0.72;
+    }
+
+    .outer-corner-depth {
+      fill: url(#outerCornerDepthLight);
+      opacity: 0.86;
+    }
+
+    .outer-bottom-depth {
+      fill: url(#outerBottomDepthLight);
+      opacity: 0.66;
+    }
+
+    .inner-shadow {
+      fill: url(#innerShadowLight);
+      opacity: 0.58;
+      transform: translateY(0.28px);
+    }
+
+    .inner-base {
+      fill: url(#innerFillLight);
+    }
+
+    .inner-depth {
+      fill: url(#innerDepthLight);
+      opacity: 0.72;
+    }
+
+    .inner-top-highlight {
+      fill: url(#innerTopHighlightLight);
+      opacity: 0.72;
+    }
+
+    .inner-edge-depth {
+      fill: url(#innerEdgeDepthLight);
+      opacity: 0.68;
+    }
+
+    .inner-bottom-depth {
+      fill: url(#innerBottomDepthLight);
+      opacity: 0.58;
+    }
+
+    .symbol-rim-shadow {
+      fill: var(--symbol-rim-shadow);
+      transform: translate(0.10px, 0.14px);
+      filter: url(#softenSymbolRimShadow);
+    }
+
+    .symbol-rim-highlight {
+      fill: var(--symbol-rim-highlight);
+      transform: translate(-0.06px, -0.07px);
+      filter: url(#softenSymbolRimHighlight);
+    }
+
+    .symbol-cutout {
+      fill: url(#symbolCutoutLight);
+    }
+
+    .chromatic-red {
+      fill: rgb(255 80 120 / 0.13);
+      transform: translate(0.05px, -0.02px);
+      mix-blend-mode: screen;
+    }
+
+    .chromatic-blue {
+      fill: rgb(90 165 255 / 0.15);
+      transform: translate(-0.05px, 0.03px);
+      mix-blend-mode: screen;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .outer-base {
+        fill: url(#outerFillDark);
+      }
+
+      .outer-soft-shade {
+        fill: url(#outerSoftShadeDark);
+        opacity: 1;
+      }
+
+      .outer-top-highlight {
+        fill: url(#outerTopHighlightDark);
+        opacity: 0.5;
+      }
+
+      .outer-corner-depth {
+        fill: url(#outerCornerDepthDark);
+        opacity: 0.9;
+      }
+
+      .outer-bottom-depth {
+        fill: url(#outerBottomDepthDark);
+        opacity: 0.82;
+      }
+
+      .inner-shadow {
+        fill: url(#innerShadowDark);
+        opacity: 0.56;
+      }
+
+      .inner-base {
+        fill: url(#innerFillDark);
+      }
+
+      .inner-depth {
+        fill: url(#innerDepthDark);
+        opacity: 0.62;
+      }
+
+      .inner-top-highlight {
+        fill: url(#innerTopHighlightDark);
+        opacity: 0.56;
+      }
+
+      .inner-edge-depth {
+        fill: url(#innerEdgeDepthDark);
+        opacity: 0.58;
+      }
+
+      .inner-bottom-depth {
+        fill: url(#innerBottomDepthDark);
+        opacity: 0.5;
+      }
+
+      .symbol-cutout {
+        fill: url(#symbolCutoutDark);
+      }
+
+      .chromatic-red {
+        fill: rgb(255 120 160 / 0.09);
+      }
+
+      .chromatic-blue {
+        fill: rgb(135 175 255 / 0.11);
+      }
+    }
+  </style>
+
+  <defs>
+    <rect id="outerShape" x="0.45" y="0.45" width="23.1" height="23.1" rx="5.55"/>
+    <path id="innerShape" fill-rule="evenodd" clip-rule="evenodd" d="M3.46447 3.46447C2 4.92893 2 7.28595 2 12C2 16.714 2 19.0711 3.46447 20.5355C4.92893 22 7.28595 22 12 22C16.714 22 19.0711 22 20.5355 20.5355C22 19.0711 22 16.714 22 12C22 7.28595 22 4.92893 20.5355 3.46447C19.0711 2 16.714 2 12 2C7.28595 2 4.92893 2 3.46447 3.46447Z"/>
+    <path id="trendSymbol" d="M13.75 10C13.75 10.4142 14.0858 10.75 14.5 10.75H15.1893L13.1768 12.7626C13.0791 12.8602 12.9209 12.8602 12.8232 12.7626L11.2374 11.1768C10.554 10.4934 9.44598 10.4934 8.76256 11.1768L6.46967 13.4697C6.17678 13.7626 6.17678 14.2374 6.46967 14.5303C6.76256 14.8232 7.23744 14.8232 7.53033 14.5303L9.82322 12.2374C9.92085 12.1398 10.0791 12.1398 10.1768 12.2374L11.7626 13.8232C12.446 14.5066 13.554 14.5066 14.2374 13.8232L16.25 11.8107V12.5C16.25 12.9142 16.5858 13.25 17 13.25C17.4142 13.25 17.75 12.9142 17.75 12.5V10C17.75 9.58579 17.4142 9.25 17 9.25H14.5C14.0858 9.25 13.75 9.58579 13.75 10Z"/>
+
+    <clipPath id="outerClip">
+      <use href="#outerShape"/>
+    </clipPath>
+
+    <clipPath id="innerClip">
+      <use href="#innerShape"/>
+    </clipPath>
+
+    <linearGradient id="outerFillLight" x1="12" y1="0.45" x2="12" y2="23.55" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="0.62" stop-color="#fafaf9"/>
+      <stop offset="1" stop-color="#eeeeec"/>
+    </linearGradient>
+
+    <linearGradient id="outerFillDark" x1="12" y1="0.45" x2="12" y2="23.55" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#303030"/>
+      <stop offset="0.54" stop-color="#1b1b1b"/>
+      <stop offset="1" stop-color="#101010"/>
+    </linearGradient>
+
+    <linearGradient id="symbolCutoutLight" x1="12" y1="8.8" x2="12" y2="15.2" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fbfbfa"/>
+      <stop offset="0.62" stop-color="#fafaf9"/>
+      <stop offset="1" stop-color="#f7f7f5"/>
+    </linearGradient>
+
+    <linearGradient id="symbolCutoutDark" x1="12" y1="8.8" x2="12" y2="15.2" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1d1d1d"/>
+      <stop offset="0.62" stop-color="#1b1b1b"/>
+      <stop offset="1" stop-color="#181818"/>
+    </linearGradient>
+
+    <radialGradient id="outerSoftShadeLight" cx="50%" cy="90%" r="78%">
+      <stop offset="0" stop-color="#d9d9d6" stop-opacity="0.68"/>
+      <stop offset="0.36" stop-color="#d9d9d6" stop-opacity="0.28"/>
+      <stop offset="0.72" stop-color="#d9d9d6" stop-opacity="0.08"/>
+      <stop offset="1" stop-color="#d9d9d6" stop-opacity="0"/>
+    </radialGradient>
+
+    <radialGradient id="outerSoftShadeDark" cx="50%" cy="88%" r="78%">
+      <stop offset="0" stop-color="#000000" stop-opacity="0.48"/>
+      <stop offset="0.38" stop-color="#000000" stop-opacity="0.28"/>
+      <stop offset="0.74" stop-color="#000000" stop-opacity="0.08"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+
+    <linearGradient id="outerEdgeLight" x1="4" y1="1" x2="20" y2="23" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="1"/>
+      <stop offset="0.45" stop-color="#ffffff" stop-opacity="0.34"/>
+      <stop offset="0.78" stop-color="#d5d5d1" stop-opacity="0.40"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0.82"/>
+    </linearGradient>
+
+    <linearGradient id="outerEdgeDark" x1="4" y1="1" x2="20" y2="23" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.38"/>
+      <stop offset="0.46" stop-color="#ffffff" stop-opacity="0.08"/>
+      <stop offset="0.76" stop-color="#000000" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0.18"/>
+    </linearGradient>
+
+    <linearGradient id="outerInnerEdgeLight" x1="12" y1="0.9" x2="12" y2="23.1" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.88"/>
+      <stop offset="0.52" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="1" stop-color="#d3d3cf" stop-opacity="0.48"/>
+    </linearGradient>
+
+    <linearGradient id="outerInnerEdgeDark" x1="12" y1="0.9" x2="12" y2="23.1" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.22"/>
+      <stop offset="0.52" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.46"/>
+    </linearGradient>
+
+    <radialGradient id="innerShadowLight" cx="50%" cy="88%" r="67%">
+      <stop offset="0" stop-color="#20234f" stop-opacity="0.36"/>
+      <stop offset="0.44" stop-color="#20234f" stop-opacity="0.18"/>
+      <stop offset="0.78" stop-color="#20234f" stop-opacity="0.05"/>
+      <stop offset="1" stop-color="#20234f" stop-opacity="0"/>
+    </radialGradient>
+
+    <radialGradient id="innerShadowDark" cx="50%" cy="88%" r="68%">
+      <stop offset="0" stop-color="#000000" stop-opacity="0.34"/>
+      <stop offset="0.46" stop-color="#000000" stop-opacity="0.16"/>
+      <stop offset="0.8" stop-color="#000000" stop-opacity="0.04"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+
+    <linearGradient id="innerFillLight" x1="12" y1="2" x2="12" y2="22" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#07094a"/>
+      <stop offset="0.52" stop-color="#151b58"/>
+      <stop offset="1" stop-color="#6e7290"/>
+    </linearGradient>
+
+    <linearGradient id="innerFillDark" x1="12" y1="2" x2="12" y2="22" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#c3c4e5"/>
+      <stop offset="0.52" stop-color="#a4a6cd"/>
+      <stop offset="1" stop-color="#72748e"/>
+    </linearGradient>
+
+    <radialGradient id="innerDepthLight" cx="50%" cy="100%" r="68%">
+      <stop offset="0" stop-color="#000000" stop-opacity="0.30"/>
+      <stop offset="0.44" stop-color="#000000" stop-opacity="0.12"/>
+      <stop offset="0.8" stop-color="#000000" stop-opacity="0.03"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+
+    <radialGradient id="innerDepthDark" cx="50%" cy="100%" r="72%">
+      <stop offset="0" stop-color="#000000" stop-opacity="0.22"/>
+      <stop offset="0.46" stop-color="#000000" stop-opacity="0.10"/>
+      <stop offset="0.82" stop-color="#000000" stop-opacity="0.02"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+
+    <linearGradient id="innerRimLight" x1="5" y1="2.6" x2="19" y2="21.4" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.32"/>
+      <stop offset="0.18" stop-color="#767bb0" stop-opacity="0.78"/>
+      <stop offset="0.72" stop-color="#3d416f" stop-opacity="0.70"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0.20"/>
+    </linearGradient>
+
+    <linearGradient id="innerRimDark" x1="5" y1="2.6" x2="19" y2="21.4" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.46"/>
+      <stop offset="0.28" stop-color="#d5d7ff" stop-opacity="0.58"/>
+      <stop offset="0.76" stop-color="#767890" stop-opacity="0.52"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0.18"/>
+    </linearGradient>
+
+    <linearGradient id="innerGlassEdgeLight" x1="12" y1="2.2" x2="12" y2="21.8" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.68"/>
+      <stop offset="0.22" stop-color="#ffffff" stop-opacity="0.20"/>
+      <stop offset="0.62" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.18"/>
+    </linearGradient>
+
+    <linearGradient id="innerGlassEdgeDark" x1="12" y1="2.2" x2="12" y2="21.8" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.58"/>
+      <stop offset="0.22" stop-color="#ffffff" stop-opacity="0.18"/>
+      <stop offset="0.62" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.16"/>
+    </linearGradient>
+
+    <linearGradient id="innerSpecularLight" x1="4" y1="3.6" x2="20" y2="5" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="0.22" stop-color="#ffffff" stop-opacity="0.52"/>
+      <stop offset="0.56" stop-color="#ffffff" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+
+    <linearGradient id="innerSpecularDark" x1="4" y1="3.6" x2="20" y2="5" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="0.24" stop-color="#ffffff" stop-opacity="0.42"/>
+      <stop offset="0.58" stop-color="#ffffff" stop-opacity="0.14"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+
+    <filter id="softenSymbolRimShadow" x="-24%" y="-24%" width="148%" height="148%">
+      <feGaussianBlur stdDeviation="0.12"/>
+    </filter>
+
+    <filter id="softenSymbolRimHighlight" x="-24%" y="-24%" width="148%" height="148%">
+      <feGaussianBlur stdDeviation="0.055"/>
+    </filter>
+  </defs>
+
+  <g clip-path="url(#outerClip)">
+    <use class="outer-base" href="#outerShape"/>
+    <use class="outer-soft-shade" href="#outerShape"/>
+  </g>
+  <use class="outer-edge" href="#outerShape"/>
+  <rect class="outer-inner-edge" x="0.82" y="0.82" width="22.36" height="22.36" rx="5.12"/>
+
+  <g transform="translate(2.88 2.88) scale(0.76)">
+    <use class="inner-shadow" href="#innerShape"/>
+    <use class="inner-base" href="#innerShape"/>
+    <g clip-path="url(#innerClip)">
+      <rect class="inner-depth" x="2" y="2" width="20" height="20"/>
+      <use class="chromatic-red" href="#innerShape"/>
+      <use class="chromatic-blue" href="#innerShape"/>
+    </g>
+    <use class="symbol-rim-highlight" href="#trendSymbol"/>
+    <use class="symbol-rim-shadow" href="#trendSymbol"/>
+    <use class="symbol-cutout" href="#trendSymbol"/>
+    <use class="inner-rim" href="#innerShape"/>
+    <path class="inner-glass-edge" d="M3.57 3.62C4.94 2.28 7.28 2.18 12 2.18C16.72 2.18 19.06 2.28 20.43 3.62C21.77 4.94 21.84 7.34 21.84 12C21.84 16.66 21.77 19.06 20.43 20.38C19.06 21.72 16.72 21.82 12 21.82C7.28 21.82 4.94 21.72 3.57 20.38C2.23 19.06 2.16 16.66 2.16 12C2.16 7.34 2.23 4.94 3.57 3.62Z"/>
+    <path class="inner-specular" d="M4.25 4.05C5.72 2.98 8.18 2.88 12 2.88C15.82 2.88 18.28 2.98 19.75 4.05"/>
+  </g>
+</svg>
