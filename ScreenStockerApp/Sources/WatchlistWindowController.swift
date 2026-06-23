@@ -15,7 +15,7 @@ final class WatchlistWindowController: NSWindowController {
         window.toolbarStyle = .unified
         window.backgroundColor = .windowBackgroundColor
         window.isMovableByWindowBackground = true
-        window.setContentSize(NSSize(width: 880, height: 560))
+        window.setContentSize(NSSize(width: 1056, height: 560))
         window.minSize = NSSize(width: 760, height: 500)
 
         super.init(window: window)

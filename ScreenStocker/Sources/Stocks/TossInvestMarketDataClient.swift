@@ -209,6 +209,7 @@ final class TossInvestMarketDataClient {
     private let currentDate: () -> Date
     private let baseURL = URL(string: "https://openapi.tossinvest.com")!
     private let decoder: JSONDecoder
+    private static let maximumIntradayCandleGap: TimeInterval = 5 * 60
 
     init(
         credentialsStore: any TossInvestCredentialsProviding = TossInvestCredentialsStore(),
@@ -479,10 +480,42 @@ final class TossInvestMarketDataClient {
         )
 
         if let cachedEntry, cachedEntry.isComplete {
-            let mergedCandles = Self.mergedCandles(cachedEntry.candles, firstPageCandles)
+            let initialMergedCandles = Self.mergedCandles(cachedEntry.candles, firstPageCandles)
+            let shouldBackfill = hasLargeIntradayGap(
+                in: initialMergedCandles,
+                symbol: symbol,
+                venue: venue,
+                sessionKind: sessionKind,
+                referenceDate: latestCandleTimestamp
+            )
+            let mergedCandles: [IntradayCandle]
+
+            if shouldBackfill {
+                let backfilledCandles = try await fetchSessionMinuteCandles(
+                    symbol: symbol,
+                    token: token,
+                    firstPage: firstPage,
+                    sessionStart: fetchBounds.start
+                )
+                let rawCandles = backfilledCandles
+                    .filter { $0.timestamp >= fetchBounds.start && $0.timestamp <= fetchBounds.end }
+                    .map(Self.intradayCandle(from:))
+                mergedCandles = Self.mergedCandles(cachedEntry.candles, rawCandles)
+            } else {
+                mergedCandles = initialMergedCandles
+            }
+
+            let hasIncompleteGap = hasLargeIntradayGap(
+                in: mergedCandles,
+                symbol: symbol,
+                venue: venue,
+                sessionKind: sessionKind,
+                referenceDate: latestCandleTimestamp
+            )
+
             chartSeriesCacheStore.save(
                 candles: mergedCandles,
-                isComplete: true,
+                isComplete: !hasIncompleteGap,
                 for: symbol,
                 dayIdentifier: dayIdentifier,
                 timeZoneIdentifier: marketTimeZone.identifier,
@@ -510,9 +543,17 @@ final class TossInvestMarketDataClient {
             return StockChartSeries(symbol: symbol, points: [])
         }
         let mergedCandles = Self.mergedCandles(cachedEntry?.candles ?? [], rawCandles)
+        let hasIncompleteGap = hasLargeIntradayGap(
+            in: mergedCandles,
+            symbol: symbol,
+            venue: venue,
+            sessionKind: sessionKind,
+            referenceDate: latestCandleTimestamp
+        )
+
         chartSeriesCacheStore.save(
             candles: mergedCandles,
-            isComplete: true,
+            isComplete: !hasIncompleteGap,
             for: symbol,
             dayIdentifier: dayIdentifier,
             timeZoneIdentifier: marketTimeZone.identifier,
@@ -907,6 +948,50 @@ final class TossInvestMarketDataClient {
             mergedByTimestamp[candle.timestamp] = candle
         }
         return mergedByTimestamp.values.sorted { $0.timestamp < $1.timestamp }
+    }
+
+    private func hasLargeIntradayGap(
+        in candles: [IntradayCandle],
+        symbol: String,
+        venue: TradingVenue,
+        sessionKind: TradingSessionKind,
+        referenceDate: Date
+    ) -> Bool {
+        let windows = tradingSessionWindows(
+            for: symbol,
+            venue: venue,
+            sessionKind: sessionKind,
+            on: referenceDate
+        )
+        let timestampsByWindow = windows.map { window in
+            candles
+                .map(\.timestamp)
+                .filter { $0 >= window.start && $0 <= window.end }
+                .sorted()
+        }
+
+        if timestampsByWindow.contains(where: {
+            Self.hasLargeGap(in: $0, maximumGap: Self.maximumIntradayCandleGap)
+        }) {
+            return true
+        }
+
+        let populatedWindowIndexes = timestampsByWindow.enumerated().compactMap { index, timestamps in
+            timestamps.isEmpty ? nil : index
+        }
+        guard let firstPopulatedWindow = populatedWindowIndexes.first,
+              let lastPopulatedWindow = populatedWindowIndexes.last,
+              firstPopulatedWindow < lastPopulatedWindow else {
+            return false
+        }
+
+        return timestampsByWindow[firstPopulatedWindow...lastPopulatedWindow].contains { $0.isEmpty }
+    }
+
+    private static func hasLargeGap(in timestamps: [Date], maximumGap: TimeInterval) -> Bool {
+        return zip(timestamps, timestamps.dropFirst()).contains { previous, current in
+            current.timeIntervalSince(previous) > maximumGap
+        }
     }
 
     private static func marketTimeZone(for venue: TradingVenue) -> TimeZone {
