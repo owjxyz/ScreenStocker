@@ -77,9 +77,15 @@ echo "Installed $APP_NAME to $APP_INSTALL_PATH"
 echo "Built app at $APP_PATH"
 
 if [ "$REFRESH_AFTER_INSTALL" = true ]; then
+  CACHE_PATH="$HOME/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches/com.apple.wallpaper.caches/screenSaver-$INSTALL_PATH"
+
   echo "Refreshing screen saver host processes..."
+  rm -rf "$CACHE_PATH"
+  pkill -x "cfprefsd" >/dev/null 2>&1 || true
   pkill -x "System Settings" >/dev/null 2>&1 || true
   pkill -x "legacyScreenSaver" >/dev/null 2>&1 || true
   pkill -x "ScreenSaverEngine" >/dev/null 2>&1 || true
+  pkill -x "WallpaperAgent" >/dev/null 2>&1 || true
+  pkill -x "wallpaperAgent" >/dev/null 2>&1 || true
   echo "Refresh complete. Reopen Screen Saver settings to load the newly installed bundle."
 fi
