@@ -1,4 +1,8 @@
-# 📈 ScreenStocker
+<div align="center">
+  <img src="https://github.com/owjxyz/ScreenStocker/blob/main/Docs/screenstocker-dynamic-glass.svg" width="256">
+  
+  # 📈 ScreenStocker
+</div>
 
 macOS 화면 보호기에서 관심 있는 주식의 현재 가격 상태와 차트를 보여주는 가벼운 화면 보호기입니다. 
 
