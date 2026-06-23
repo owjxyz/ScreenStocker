@@ -40,7 +40,7 @@ final class StockChartSeriesCacheStoreTests: XCTestCase {
         )
     }
 
-    func testPrunesKRXPreviousDayEntryAtSeoulMarketOpen() {
+    func testKeepsKRXPreviousDayEntryAtSeoulMarketOpenForFallback() {
         let defaults = UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.cache.\(UUID().uuidString)")!
         let store = StockChartSeriesCacheStore(defaults: defaults)
         let timeZone = TimeZone(identifier: "Asia/Seoul")!
@@ -68,7 +68,7 @@ final class StockChartSeriesCacheStoreTests: XCTestCase {
 
         store.pruneStaleEntries(referenceDate: marketOpen)
 
-        XCTAssertNil(
+        XCTAssertNotNil(
             store.entry(
                 for: "005930",
                 dayIdentifier: StockChartSeriesCacheStore.dayIdentifier(for: yesterday, timeZone: timeZone),
@@ -116,7 +116,7 @@ final class StockChartSeriesCacheStoreTests: XCTestCase {
         )
     }
 
-    func testPrunesUSPreviousDayEntryAtNewYorkMarketOpen() {
+    func testKeepsUSPreviousDayEntryAtNewYorkMarketOpenForFallback() {
         let defaults = UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.cache.\(UUID().uuidString)")!
         let store = StockChartSeriesCacheStore(defaults: defaults)
         let timeZone = TimeZone(identifier: "America/New_York")!
@@ -144,7 +144,7 @@ final class StockChartSeriesCacheStoreTests: XCTestCase {
 
         store.pruneStaleEntries(referenceDate: marketOpen)
 
-        XCTAssertNil(
+        XCTAssertNotNil(
             store.entry(
                 for: "AAPL",
                 dayIdentifier: StockChartSeriesCacheStore.dayIdentifier(for: yesterday, timeZone: timeZone),

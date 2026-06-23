@@ -16,8 +16,45 @@ struct IntradaySeriesCacheEntry: Codable, Equatable {
     let symbol: String
     let dayIdentifier: String
     let timeZoneIdentifier: String
+    let sessionIdentifier: String
     var isComplete: Bool
     var candles: [IntradayCandle]
+
+    init(
+        symbol: String,
+        dayIdentifier: String,
+        timeZoneIdentifier: String,
+        sessionIdentifier: String = StockChartSeriesCacheStore.defaultSessionIdentifier,
+        isComplete: Bool,
+        candles: [IntradayCandle]
+    ) {
+        self.symbol = symbol
+        self.dayIdentifier = dayIdentifier
+        self.timeZoneIdentifier = timeZoneIdentifier
+        self.sessionIdentifier = sessionIdentifier
+        self.isComplete = isComplete
+        self.candles = candles
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case symbol
+        case dayIdentifier
+        case timeZoneIdentifier
+        case sessionIdentifier
+        case isComplete
+        case candles
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        symbol = try container.decode(String.self, forKey: .symbol)
+        dayIdentifier = try container.decode(String.self, forKey: .dayIdentifier)
+        timeZoneIdentifier = try container.decode(String.self, forKey: .timeZoneIdentifier)
+        sessionIdentifier = try container.decodeIfPresent(String.self, forKey: .sessionIdentifier)
+            ?? StockChartSeriesCacheStore.defaultSessionIdentifier
+        isComplete = try container.decode(Bool.self, forKey: .isComplete)
+        candles = try container.decode([IntradayCandle].self, forKey: .candles)
+    }
 }
 
 final class StockChartSeriesCacheStore {
@@ -26,6 +63,7 @@ final class StockChartSeriesCacheStore {
     }
 
     private static let suiteName = "com.tasokiii.ScreenStocker.marketDataCache"
+    static let defaultSessionIdentifier = "default"
 
     private let defaults: UserDefaults
     private let mirrorsSharedCache: Bool
@@ -40,21 +78,36 @@ final class StockChartSeriesCacheStore {
         for symbol: String,
         dayIdentifier: String,
         timeZoneIdentifier: String,
+        sessionIdentifier: String = StockChartSeriesCacheStore.defaultSessionIdentifier,
         referenceDate: Date = Date()
     ) -> IntradaySeriesCacheEntry? {
         pruneStaleEntries(referenceDate: referenceDate)
-        guard let entries = loadEntries(),
-              let entry = entries[symbol],
-              entry.dayIdentifier == dayIdentifier,
-              entry.timeZoneIdentifier == timeZoneIdentifier else {
+        guard let entries = loadEntries() else {
             return nil
         }
-        return entry
+
+        let key = Self.cacheKey(
+            symbol: symbol,
+            dayIdentifier: dayIdentifier,
+            timeZoneIdentifier: timeZoneIdentifier,
+            sessionIdentifier: sessionIdentifier
+        )
+        if let entry = entries[key] {
+            return entry
+        }
+
+        return entries.values.first {
+            $0.symbol == symbol
+                && $0.dayIdentifier == dayIdentifier
+                && $0.timeZoneIdentifier == timeZoneIdentifier
+                && $0.sessionIdentifier == sessionIdentifier
+        }
     }
 
     func activeSessionEntry(
         for symbol: String,
         timeZoneIdentifier: String,
+        sessionIdentifier: String = StockChartSeriesCacheStore.defaultSessionIdentifier,
         referenceDate: Date = Date()
     ) -> IntradaySeriesCacheEntry? {
         guard let timeZone = TimeZone(identifier: timeZoneIdentifier) else {
@@ -63,10 +116,33 @@ final class StockChartSeriesCacheStore {
 
         return entry(
             for: symbol,
-            dayIdentifier: Self.activeSessionDayIdentifier(for: referenceDate, timeZone: timeZone),
+            dayIdentifier: Self.activeSessionDayIdentifier(
+                for: referenceDate,
+                timeZone: timeZone,
+                sessionIdentifier: sessionIdentifier
+            ),
             timeZoneIdentifier: timeZoneIdentifier,
+            sessionIdentifier: sessionIdentifier,
             referenceDate: referenceDate
         )
+    }
+
+    func latestEntry(
+        for symbol: String,
+        timeZoneIdentifier: String,
+        sessionIdentifier: String = StockChartSeriesCacheStore.defaultSessionIdentifier
+    ) -> IntradaySeriesCacheEntry? {
+        loadEntries()?.values
+            .filter {
+                $0.symbol == symbol
+                    && $0.timeZoneIdentifier == timeZoneIdentifier
+                    && $0.sessionIdentifier == sessionIdentifier
+                    && !$0.candles.isEmpty
+            }
+            .max { lhs, rhs in
+                (lhs.candles.map(\.timestamp).max() ?? .distantPast)
+                    < (rhs.candles.map(\.timestamp).max() ?? .distantPast)
+            }
     }
 
     func save(
@@ -75,14 +151,22 @@ final class StockChartSeriesCacheStore {
         for symbol: String,
         dayIdentifier: String,
         timeZoneIdentifier: String,
+        sessionIdentifier: String = StockChartSeriesCacheStore.defaultSessionIdentifier,
         referenceDate: Date = Date()
     ) {
         pruneStaleEntries(referenceDate: referenceDate)
         var entries = loadEntries() ?? [:]
-        entries[symbol] = IntradaySeriesCacheEntry(
+        let key = Self.cacheKey(
             symbol: symbol,
             dayIdentifier: dayIdentifier,
             timeZoneIdentifier: timeZoneIdentifier,
+            sessionIdentifier: sessionIdentifier
+        )
+        entries[key] = IntradaySeriesCacheEntry(
+            symbol: symbol,
+            dayIdentifier: dayIdentifier,
+            timeZoneIdentifier: timeZoneIdentifier,
+            sessionIdentifier: sessionIdentifier,
             isComplete: isComplete,
             candles: candles.sorted(by: { $0.timestamp < $1.timestamp })
         )
@@ -93,19 +177,42 @@ final class StockChartSeriesCacheStore {
         guard var entries = loadEntries() else { return }
 
         let filteredEntries = entries.filter { _, entry in
-            guard let timeZone = TimeZone(identifier: entry.timeZoneIdentifier) else {
-                return false
-            }
-
-            return entry.dayIdentifier == Self.activeSessionDayIdentifier(
-                for: referenceDate,
-                timeZone: timeZone
-            )
+            Self.isEntryRecent(entry, referenceDate: referenceDate)
         }
 
         guard filteredEntries.count != entries.count else { return }
         entries = filteredEntries
         store(entries: entries)
+    }
+
+    private static func isEntryRecent(_ entry: IntradaySeriesCacheEntry, referenceDate: Date) -> Bool {
+        guard let timeZone = TimeZone(identifier: entry.timeZoneIdentifier) else {
+            return false
+        }
+
+        let activeDayIdentifier = activeSessionDayIdentifier(
+            for: referenceDate,
+            timeZone: timeZone,
+            sessionIdentifier: entry.sessionIdentifier
+        )
+        return daysBetween(entry.dayIdentifier, and: activeDayIdentifier).map { $0 <= 7 } ?? false
+    }
+
+    private static func daysBetween(_ lhs: String, and rhs: String) -> Int? {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+
+        guard let lhsDate = formatter.date(from: lhs),
+              let rhsDate = formatter.date(from: rhs) else {
+            return nil
+        }
+
+        return Calendar(identifier: .gregorian)
+            .dateComponents([.day], from: lhsDate, to: rhsDate)
+            .day
+            .map(abs)
     }
 
     private func loadEntries() -> [String: IntradaySeriesCacheEntry]? {
@@ -155,15 +262,17 @@ final class StockChartSeriesCacheStore {
         _ newEntries: [String: IntradaySeriesCacheEntry]
     ) -> [String: IntradaySeriesCacheEntry] {
         var mergedEntries = existingEntries
-        for (symbol, newEntry) in newEntries {
-            guard let existingEntry = mergedEntries[symbol] else {
-                mergedEntries[symbol] = newEntry
+        for (key, newEntry) in newEntries {
+            let normalizedKey = normalizedEntryKey(key, entry: newEntry)
+            guard let existingEntry = mergedEntries[normalizedKey] else {
+                mergedEntries[normalizedKey] = newEntry
                 continue
             }
 
             guard existingEntry.dayIdentifier == newEntry.dayIdentifier,
-                  existingEntry.timeZoneIdentifier == newEntry.timeZoneIdentifier else {
-                mergedEntries[symbol] = newerEntry(existingEntry, newEntry)
+                  existingEntry.timeZoneIdentifier == newEntry.timeZoneIdentifier,
+                  existingEntry.sessionIdentifier == newEntry.sessionIdentifier else {
+                mergedEntries[normalizedKey] = newerEntry(existingEntry, newEntry)
                 continue
             }
 
@@ -175,15 +284,37 @@ final class StockChartSeriesCacheStore {
                 candlesByTimestamp[candle.timestamp] = candle
             }
 
-            mergedEntries[symbol] = IntradaySeriesCacheEntry(
-                symbol: symbol,
+            mergedEntries[normalizedKey] = IntradaySeriesCacheEntry(
+                symbol: existingEntry.symbol,
                 dayIdentifier: existingEntry.dayIdentifier,
                 timeZoneIdentifier: existingEntry.timeZoneIdentifier,
+                sessionIdentifier: existingEntry.sessionIdentifier,
                 isComplete: existingEntry.isComplete || newEntry.isComplete,
                 candles: candlesByTimestamp.values.sorted { $0.timestamp < $1.timestamp }
             )
         }
         return mergedEntries
+    }
+
+    private static func normalizedEntryKey(_ key: String, entry: IntradaySeriesCacheEntry) -> String {
+        if key.contains("|") {
+            return key
+        }
+        return cacheKey(
+            symbol: entry.symbol,
+            dayIdentifier: entry.dayIdentifier,
+            timeZoneIdentifier: entry.timeZoneIdentifier,
+            sessionIdentifier: entry.sessionIdentifier
+        )
+    }
+
+    private static func cacheKey(
+        symbol: String,
+        dayIdentifier: String,
+        timeZoneIdentifier: String,
+        sessionIdentifier: String
+    ) -> String {
+        "\(symbol)|\(timeZoneIdentifier)|\(sessionIdentifier)|\(dayIdentifier)"
     }
 
     private static func newerEntry(
@@ -289,11 +420,15 @@ final class StockChartSeriesCacheStore {
         return String(format: "%04d-%02d-%02d", year, month, day)
     }
 
-    private static func activeSessionDayIdentifier(for date: Date, timeZone: TimeZone) -> String {
+    private static func activeSessionDayIdentifier(
+        for date: Date,
+        timeZone: TimeZone,
+        sessionIdentifier: String
+    ) -> String {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
 
-        let rolloverTime = cacheRolloverTime(for: timeZone)
+        let rolloverTime = cacheRolloverTime(for: timeZone, sessionIdentifier: sessionIdentifier)
         let rolloverDate = calendar.date(
             bySettingHour: rolloverTime.hour,
             minute: rolloverTime.minute,
@@ -315,11 +450,16 @@ final class StockChartSeriesCacheStore {
         return dayIdentifier(for: activeSessionDate, timeZone: timeZone)
     }
 
-    private static func cacheRolloverTime(for timeZone: TimeZone) -> (hour: Int, minute: Int) {
-        switch timeZone.identifier {
-        case "Asia/Seoul":
+    private static func cacheRolloverTime(
+        for timeZone: TimeZone,
+        sessionIdentifier: String
+    ) -> (hour: Int, minute: Int) {
+        switch (timeZone.identifier, sessionIdentifier) {
+        case ("Asia/Seoul", _):
             return (8, 0)
-        case "America/New_York":
+        case ("America/New_York", "usDayMarket"):
+            return (20, 0)
+        case ("America/New_York", _):
             return (4, 0)
         default:
             return (0, 0)

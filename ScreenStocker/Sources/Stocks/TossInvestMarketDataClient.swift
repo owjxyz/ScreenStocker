@@ -35,6 +35,20 @@ final class TossInvestMarketDataClient {
         case us
     }
 
+    private enum TradingSessionKind {
+        case standard
+        case usDayMarket
+
+        var cacheIdentifier: String {
+            switch self {
+            case .standard:
+                return StockChartSeriesCacheStore.defaultSessionIdentifier
+            case .usDayMarket:
+                return "usDayMarket"
+            }
+        }
+    }
+
     private struct TradingSessionWindow {
         let start: Date
         let end: Date
@@ -192,17 +206,20 @@ final class TossInvestMarketDataClient {
     private let credentialsStore: any TossInvestCredentialsProviding
     private let session: URLSession
     private let chartSeriesCacheStore: StockChartSeriesCacheStore
+    private let currentDate: () -> Date
     private let baseURL = URL(string: "https://openapi.tossinvest.com")!
     private let decoder: JSONDecoder
 
     init(
         credentialsStore: any TossInvestCredentialsProviding = TossInvestCredentialsStore(),
         session: URLSession = .shared,
-        chartSeriesCacheStore: StockChartSeriesCacheStore = StockChartSeriesCacheStore()
+        chartSeriesCacheStore: StockChartSeriesCacheStore = StockChartSeriesCacheStore(),
+        currentDate: @escaping () -> Date = Date.init
     ) {
         self.credentialsStore = credentialsStore
         self.session = session
         self.chartSeriesCacheStore = chartSeriesCacheStore
+        self.currentDate = currentDate
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
             try Self.decodeDate(from: decoder)
@@ -251,11 +268,13 @@ final class TossInvestMarketDataClient {
         }
 
         let tradingVenue = tradingVenue(for: price.symbol, market: stockInfo?.market)
+        let sessionKind = activeSessionKind(for: tradingVenue, referenceDate: currentDate())
         let dailyCandles = (try? await fetchDailyCandlePage(symbol: price.symbol, token: token).candles) ?? []
         let series = await intradaySeriesForSnapshot(
             symbol: price.symbol,
             token: token,
             venue: tradingVenue,
+            sessionKind: sessionKind,
             latestQuoteTimestamp: price.timestamp
         )
         let changePercent = changePercent(
@@ -278,9 +297,16 @@ final class TossInvestMarketDataClient {
         symbol: String,
         token: String,
         venue: TradingVenue,
+        sessionKind: TradingSessionKind,
         latestQuoteTimestamp: Date?
     ) async -> StockChartSeries {
-        if let cachedEntry = cachedActiveIntradayEntry(symbol: symbol, venue: venue) {
+        let referenceDate = currentDate()
+        if let cachedEntry = cachedActiveIntradayEntry(
+            symbol: symbol,
+            venue: venue,
+            sessionKind: sessionKind,
+            referenceDate: referenceDate
+        ) {
             let latestCachedTimestamp = cachedEntry.candles.map(\.timestamp).max()
             let shouldFetchNewCandles = latestQuoteTimestamp.map { quoteTimestamp in
                 latestCachedTimestamp.map { quoteTimestamp > $0 } ?? true
@@ -290,23 +316,44 @@ final class TossInvestMarketDataClient {
                 return makeIntradaySeries(
                     symbol: symbol,
                     venue: venue,
+                    sessionKind: sessionKind,
                     candles: cachedEntry.candles
                 )
             }
 
-            if let series = try? await fetchIntradaySeries(symbol: symbol, token: token, venue: venue) {
+            if let series = try? await fetchIntradaySeries(
+                symbol: symbol,
+                token: token,
+                venue: venue,
+                sessionKind: sessionKind
+            ), !series.points.isEmpty {
                 return series
             }
 
             return makeIntradaySeries(
                 symbol: symbol,
                 venue: venue,
+                sessionKind: sessionKind,
                 candles: cachedEntry.candles
             )
         }
 
-        if let series = try? await fetchIntradaySeries(symbol: symbol, token: token, venue: venue) {
+        if let series = try? await fetchIntradaySeries(
+            symbol: symbol,
+            token: token,
+            venue: venue,
+            sessionKind: sessionKind
+        ), !series.points.isEmpty {
             return series
+        }
+
+        if let latestEntry = latestIntradayEntry(symbol: symbol, venue: venue, sessionKind: sessionKind) {
+            return makeIntradaySeries(
+                symbol: symbol,
+                venue: venue,
+                sessionKind: sessionKind,
+                candles: latestEntry.candles
+            )
         }
 
         return StockChartSeries(symbol: symbol, points: [])
@@ -392,7 +439,12 @@ final class TossInvestMarketDataClient {
         return try decoder.decode(StockInfoEnvelope.self, from: data).result
     }
 
-    private func fetchIntradaySeries(symbol: String, token: String, venue: TradingVenue) async throws -> StockChartSeries {
+    private func fetchIntradaySeries(
+        symbol: String,
+        token: String,
+        venue: TradingVenue,
+        sessionKind: TradingSessionKind
+    ) async throws -> StockChartSeries {
         let firstPage = try await fetchCandlePage(
             symbol: symbol,
             token: token,
@@ -408,13 +460,21 @@ final class TossInvestMarketDataClient {
         let latestCandleTimestamp = firstPage.candles
             .map(\.timestamp)
             .max() ?? Date()
-        let fetchBounds = tradingSessionBounds(for: symbol, venue: venue, on: latestCandleTimestamp)
-        let dayIdentifier = Self.dayIdentifier(for: latestCandleTimestamp, timeZone: marketTimeZone)
-        let firstPageCandles = firstPage.candles.map(Self.intradayCandle(from:))
+        let fetchBounds = tradingSessionBounds(
+            for: symbol,
+            venue: venue,
+            sessionKind: sessionKind,
+            on: latestCandleTimestamp
+        )
+        let dayIdentifier = Self.dayIdentifier(for: fetchBounds.start, timeZone: marketTimeZone)
+        let firstPageCandles = firstPage.candles
+            .filter { $0.timestamp >= fetchBounds.start && $0.timestamp <= fetchBounds.end }
+            .map(Self.intradayCandle(from:))
         let cachedEntry = chartSeriesCacheStore.entry(
             for: symbol,
             dayIdentifier: dayIdentifier,
             timeZoneIdentifier: marketTimeZone.identifier,
+            sessionIdentifier: sessionKind.cacheIdentifier,
             referenceDate: latestCandleTimestamp
         )
 
@@ -426,11 +486,13 @@ final class TossInvestMarketDataClient {
                 for: symbol,
                 dayIdentifier: dayIdentifier,
                 timeZoneIdentifier: marketTimeZone.identifier,
+                sessionIdentifier: sessionKind.cacheIdentifier,
                 referenceDate: latestCandleTimestamp
             )
             return makeIntradaySeries(
                 symbol: symbol,
                 venue: venue,
+                sessionKind: sessionKind,
                 candles: mergedCandles
             )
         }
@@ -441,7 +503,12 @@ final class TossInvestMarketDataClient {
             firstPage: firstPage,
             sessionStart: fetchBounds.start
         )
-        let rawCandles = candles.map(Self.intradayCandle(from:))
+        let rawCandles = candles
+            .filter { $0.timestamp >= fetchBounds.start && $0.timestamp <= fetchBounds.end }
+            .map(Self.intradayCandle(from:))
+        guard !rawCandles.isEmpty || cachedEntry != nil else {
+            return StockChartSeries(symbol: symbol, points: [])
+        }
         let mergedCandles = Self.mergedCandles(cachedEntry?.candles ?? [], rawCandles)
         chartSeriesCacheStore.save(
             candles: mergedCandles,
@@ -449,12 +516,14 @@ final class TossInvestMarketDataClient {
             for: symbol,
             dayIdentifier: dayIdentifier,
             timeZoneIdentifier: marketTimeZone.identifier,
+            sessionIdentifier: sessionKind.cacheIdentifier,
             referenceDate: latestCandleTimestamp
         )
 
         return makeIntradaySeries(
             symbol: symbol,
             venue: venue,
+            sessionKind: sessionKind,
             candles: mergedCandles
         )
     }
@@ -462,6 +531,7 @@ final class TossInvestMarketDataClient {
     private func makeIntradaySeries(
         symbol: String,
         venue: TradingVenue,
+        sessionKind: TradingSessionKind,
         candles: [IntradayCandle]
     ) -> StockChartSeries {
         let rawCandles = candles
@@ -470,7 +540,8 @@ final class TossInvestMarketDataClient {
         let (sessionStart, sessionEnd, sessionDividers) = sessionBoundsForLatestAvailableCandles(
             rawCandles,
             symbol: symbol,
-            venue: venue
+            venue: venue,
+            sessionKind: sessionKind
         )
         let filteredCandles = rawCandles
             .filter { $0.timestamp >= sessionStart && $0.timestamp <= sessionEnd }
@@ -486,11 +557,31 @@ final class TossInvestMarketDataClient {
         )
     }
 
-    private func cachedActiveIntradayEntry(symbol: String, venue: TradingVenue) -> IntradaySeriesCacheEntry? {
+    private func cachedActiveIntradayEntry(
+        symbol: String,
+        venue: TradingVenue,
+        sessionKind: TradingSessionKind,
+        referenceDate: Date
+    ) -> IntradaySeriesCacheEntry? {
         let marketTimeZone = Self.marketTimeZone(for: venue)
         return chartSeriesCacheStore.activeSessionEntry(
             for: symbol,
-            timeZoneIdentifier: marketTimeZone.identifier
+            timeZoneIdentifier: marketTimeZone.identifier,
+            sessionIdentifier: sessionKind.cacheIdentifier,
+            referenceDate: referenceDate
+        )
+    }
+
+    private func latestIntradayEntry(
+        symbol: String,
+        venue: TradingVenue,
+        sessionKind: TradingSessionKind
+    ) -> IntradaySeriesCacheEntry? {
+        let marketTimeZone = Self.marketTimeZone(for: venue)
+        return chartSeriesCacheStore.latestEntry(
+            for: symbol,
+            timeZoneIdentifier: marketTimeZone.identifier,
+            sessionIdentifier: sessionKind.cacheIdentifier
         )
     }
 
@@ -504,7 +595,7 @@ final class TossInvestMarketDataClient {
         var before = firstPage.nextBefore
         var pageCount = 1
 
-        while before != nil && pageCount < 5 {
+        while before != nil && pageCount < 8 {
             let earliestTimestamp = allCandles.map(\.timestamp).min()
             if let earliestTimestamp, earliestTimestamp <= sessionStart {
                 break
@@ -602,24 +693,45 @@ final class TossInvestMarketDataClient {
     private func sessionBoundsForLatestAvailableCandles(
         _ candles: [CandleResponse],
         symbol: String,
-        venue: TradingVenue
+        venue: TradingVenue,
+        sessionKind: TradingSessionKind
     ) -> (start: Date, end: Date, dividers: [Date]) {
         let sortedCandles = candles.sorted { $0.timestamp > $1.timestamp }
         guard let latestCandle = sortedCandles.first else {
-            return tradingSessionBounds(for: symbol, venue: venue, on: Date())
+            return tradingSessionBounds(
+                for: symbol,
+                venue: venue,
+                sessionKind: sessionKind,
+                on: Date()
+            )
         }
 
         if venue == .us {
-            return tradingSessionBounds(for: symbol, venue: venue, on: latestCandle.timestamp)
+            return tradingSessionBounds(
+                for: symbol,
+                venue: venue,
+                sessionKind: sessionKind,
+                on: latestCandle.timestamp
+            )
         }
 
-        let sessionWindows = tradingSessionWindows(for: symbol, venue: venue, on: latestCandle.timestamp)
+        let sessionWindows = tradingSessionWindows(
+            for: symbol,
+            venue: venue,
+            sessionKind: sessionKind,
+            on: latestCandle.timestamp
+        )
         let activeWindows = sessionWindows.filter { window in
             sortedCandles.contains(where: { $0.timestamp >= window.start && $0.timestamp <= window.end })
         }
 
         guard !activeWindows.isEmpty else {
-            return tradingSessionBounds(for: symbol, venue: venue, on: latestCandle.timestamp)
+            return tradingSessionBounds(
+                for: symbol,
+                venue: venue,
+                sessionKind: sessionKind,
+                on: latestCandle.timestamp
+            )
         }
 
         return (
@@ -629,8 +741,13 @@ final class TossInvestMarketDataClient {
         )
     }
 
-    private func tradingSessionBounds(for symbol: String, venue: TradingVenue, on date: Date) -> (start: Date, end: Date, dividers: [Date]) {
-        let windows = tradingSessionWindows(for: symbol, venue: venue, on: date)
+    private func tradingSessionBounds(
+        for symbol: String,
+        venue: TradingVenue,
+        sessionKind: TradingSessionKind,
+        on date: Date
+    ) -> (start: Date, end: Date, dividers: [Date]) {
+        let windows = tradingSessionWindows(for: symbol, venue: venue, sessionKind: sessionKind, on: date)
         guard let firstWindow = windows.first, let lastWindow = windows.last else {
             return (date, date, [])
         }
@@ -642,7 +759,12 @@ final class TossInvestMarketDataClient {
         )
     }
 
-    private func tradingSessionWindows(for symbol: String, venue: TradingVenue, on date: Date) -> [TradingSessionWindow] {
+    private func tradingSessionWindows(
+        for symbol: String,
+        venue: TradingVenue,
+        sessionKind: TradingSessionKind,
+        on date: Date
+    ) -> [TradingSessionWindow] {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = Self.marketTimeZone(for: venue)
 
@@ -672,6 +794,30 @@ final class TossInvestMarketDataClient {
                 TradingSessionWindow(start: afterStart, end: afterEnd, dividerAfter: nil)
             ]
         case .us:
+            if sessionKind == .usDayMarket {
+                let dayMarketStart: Date
+                let dayMarketEnd: Date
+                let hour = calendar.component(.hour, from: date)
+                if hour >= 20 {
+                    dayMarketStart = Self.sessionDate(matching: date, hour: 20, minute: 0, calendar: calendar)
+                    dayMarketEnd = calendar.date(
+                        byAdding: .hour,
+                        value: 8,
+                        to: dayMarketStart
+                    ) ?? dayMarketStart
+                } else {
+                    dayMarketEnd = Self.sessionDate(matching: date, hour: 4, minute: 0, calendar: calendar)
+                    dayMarketStart = calendar.date(
+                        byAdding: .hour,
+                        value: -8,
+                        to: dayMarketEnd
+                    ) ?? dayMarketEnd
+                }
+                return [
+                    TradingSessionWindow(start: dayMarketStart, end: dayMarketEnd, dividerAfter: nil)
+                ]
+            }
+
             let extendedStart = Self.sessionDate(matching: date, hour: 4, minute: 0, calendar: calendar)
             let regularOpen = Self.sessionDate(matching: date, hour: 9, minute: 30, calendar: calendar)
             let regularClose = Self.sessionDate(matching: date, hour: 16, minute: 0, calendar: calendar)
@@ -784,6 +930,17 @@ final class TossInvestMarketDataClient {
         case .us:
             return .us
         }
+    }
+
+    private func activeSessionKind(for venue: TradingVenue, referenceDate: Date) -> TradingSessionKind {
+        guard venue == .us else {
+            return .standard
+        }
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = Self.marketTimeZone(for: venue)
+        let hour = calendar.component(.hour, from: referenceDate)
+        return hour >= 20 || hour < 4 ? .usDayMarket : .standard
     }
 
     private func marketLabel(for market: String?, symbol: String) -> String? {
