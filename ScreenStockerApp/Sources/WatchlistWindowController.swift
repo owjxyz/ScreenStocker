@@ -1389,11 +1389,9 @@ private struct MiniLineChart: View {
                 }
                 .stroke(lineColor, style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
 
-                if points.count == 1, let onlyPoint = points.first {
-                    Circle()
-                        .fill(lineColor)
-                        .frame(width: 10, height: 10)
-                        .position(onlyPoint)
+                if let trackingPoint = points.last {
+                    MiniTrackingPointMarker(color: lineColor, diameter: 10)
+                        .position(trackingPoint)
                 }
             }
         }
@@ -1407,6 +1405,36 @@ private struct MiniLineChart: View {
     private func sessionDividerPositions(in size: CGSize) -> [CGFloat] {
         series.sessionDividers
             .map { StockChartGeometry.normalizedXPosition(for: $0, in: series, size: size) }
+    }
+}
+
+private struct MiniTrackingPointMarker: View {
+    let color: Color
+    let diameter: CGFloat
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isPulsing = false
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(color.opacity(reduceMotion ? 0.34 : 0.38))
+                .frame(width: diameter * 1.9, height: diameter * 1.9)
+                .scaleEffect(reduceMotion ? 1 : (isPulsing ? 1.75 : 0.8))
+                .opacity(reduceMotion ? 1 : (isPulsing ? 0 : 0.68))
+
+            Circle()
+                .fill(color)
+                .frame(width: diameter, height: diameter)
+        }
+        .onAppear {
+            guard !reduceMotion else { return }
+            isPulsing = true
+        }
+        .animation(
+            reduceMotion ? nil : .easeInOut(duration: 0.9).repeatForever(autoreverses: true),
+            value: isPulsing
+        )
     }
 }
 
