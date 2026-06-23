@@ -7,6 +7,7 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         MockTossInvestURLProtocol.requestCounts = [:]
         MockTossInvestURLProtocol.candle1mResponses = []
         MockTossInvestURLProtocol.candle1dResponse = nil
+        MockTossInvestURLProtocol.priceTimestamps = []
     }
 
     func testIntradaySeriesUsesCachedMarketDataAfterInitialBackfill() async throws {
@@ -72,6 +73,65 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
 
         XCTAssertFalse(firstSnapshot.series.points.isEmpty)
         XCTAssertEqual(firstSnapshot.series.points.count, secondSnapshot.series.points.count)
+        XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["1m"], 3)
+    }
+
+    func testIntradaySeriesFetchesNewCandlesWhenQuoteIsNewerThanCachedGraph() async throws {
+        let defaults = UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID().uuidString)")!
+        let cacheStore = StockChartSeriesCacheStore(defaults: defaults)
+        let session = Self.makeSession()
+        let marketTimeZone = TimeZone(identifier: "Asia/Seoul")!
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = marketTimeZone
+        let today = calendar.startOfDay(for: Date())
+        let ten = calendar.date(byAdding: .hour, value: 10, to: today)!
+        let tenTen = ten.addingTimeInterval(10 * 60)
+        let tenTwenty = ten.addingTimeInterval(20 * 60)
+        let tenThirty = ten.addingTimeInterval(30 * 60)
+        let client = TossInvestMarketDataClient(
+            credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
+            session: session,
+            chartSeriesCacheStore: cacheStore
+        )
+
+        MockTossInvestURLProtocol.priceTimestamps = [
+            Self.isoFormatter.string(from: tenTwenty),
+            Self.isoFormatter.string(from: tenThirty)
+        ]
+        MockTossInvestURLProtocol.candle1mResponses = [
+            Self.makeCandlePageData(
+                candles: Self.candles([ten, tenTen, tenTwenty]),
+                nextBefore: ten.addingTimeInterval(-10 * 60)
+            ),
+            Self.makeCandlePageData(
+                candles: Self.candles([
+                    calendar.date(byAdding: .hour, value: 9, to: today)!.addingTimeInterval(20 * 60),
+                    calendar.date(byAdding: .hour, value: 9, to: today)!.addingTimeInterval(30 * 60),
+                    calendar.date(byAdding: .hour, value: 9, to: today)!.addingTimeInterval(40 * 60)
+                ]),
+                nextBefore: calendar.date(byAdding: .hour, value: 8, to: today)!.addingTimeInterval(50 * 60)
+            ),
+            Self.makeCandlePageData(
+                candles: Self.candles([
+                    calendar.date(byAdding: .hour, value: 7, to: today)!.addingTimeInterval(40 * 60),
+                    calendar.date(byAdding: .hour, value: 7, to: today)!.addingTimeInterval(50 * 60),
+                    calendar.date(byAdding: .hour, value: 8, to: today)!
+                ]),
+                nextBefore: nil
+            ),
+            Self.makeCandlePageData(
+                candles: Self.candles([tenTen, tenTwenty, tenThirty]),
+                nextBefore: ten
+            )
+        ]
+        MockTossInvestURLProtocol.candle1dResponse = Self.makeDailyCandlePageData()
+
+        let firstSnapshot = try await client.snapshot(for: "005930")
+        let secondSnapshot = try await client.snapshot(for: "005930")
+
+        XCTAssertFalse(firstSnapshot.series.points.isEmpty)
+        XCTAssertGreaterThan(secondSnapshot.series.points.count, firstSnapshot.series.points.count)
+        XCTAssertEqual(secondSnapshot.series.points.last?.date, tenThirty)
         XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["1m"], 4)
     }
 
@@ -233,6 +293,7 @@ private final class MockTossInvestURLProtocol: URLProtocol {
     static var requestCounts: [String: Int] = [:]
     static var candle1mResponses: [Data] = []
     static var candle1dResponse: Data?
+    static var priceTimestamps: [String] = []
 
     override class func canInit(with request: URLRequest) -> Bool {
         true
@@ -313,11 +374,14 @@ private final class MockTossInvestURLProtocol: URLProtocol {
 
     private static func priceResponse(for symbol: String) -> Data {
         let isUSSymbol = StockSymbolInput.marketKind(for: symbol) == .us
+        let timestamp = priceTimestamps.isEmpty
+            ? (isUSSymbol ? "2026-06-22T20:00:00-04:00" : "2024-06-22T10:59:00+09:00")
+            : priceTimestamps.removeFirst()
         return try! JSONSerialization.data(withJSONObject: [
             "result": [
                 [
                     "symbol": symbol,
-                    "timestamp": isUSSymbol ? "2026-06-22T20:00:00-04:00" : "2024-06-22T10:59:00+09:00",
+                    "timestamp": timestamp,
                     "lastPrice": isUSSymbol ? "212.45" : "70000",
                     "currency": isUSSymbol ? "USD" : "KRW"
                 ]

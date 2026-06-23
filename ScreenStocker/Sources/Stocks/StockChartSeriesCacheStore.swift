@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 struct IntradayCandle: Codable, Equatable {
     let timestamp: Date
@@ -27,9 +28,11 @@ final class StockChartSeriesCacheStore {
     private static let suiteName = "com.tasokiii.ScreenStocker.marketDataCache"
 
     private let defaults: UserDefaults
+    private let mirrorsSharedCache: Bool
 
-    init(defaults: UserDefaults? = UserDefaults(suiteName: StockChartSeriesCacheStore.suiteName)) {
-        self.defaults = defaults ?? .standard
+    init(defaults: UserDefaults? = nil) {
+        self.defaults = defaults ?? UserDefaults(suiteName: StockChartSeriesCacheStore.suiteName) ?? .standard
+        self.mirrorsSharedCache = defaults == nil
         pruneStaleEntries()
     }
 
@@ -106,10 +109,13 @@ final class StockChartSeriesCacheStore {
     }
 
     private func loadEntries() -> [String: IntradaySeriesCacheEntry]? {
-        guard let data = defaults.data(forKey: Key.intradaySeriesCache) else {
-            return nil
+        var mergedEntries: [String: IntradaySeriesCacheEntry] = [:]
+
+        for entries in cacheEntrySources() {
+            mergedEntries = Self.mergedEntries(mergedEntries, entries)
         }
-        return try? PropertyListDecoder().decode([String: IntradaySeriesCacheEntry].self, from: data)
+
+        return mergedEntries.isEmpty ? nil : mergedEntries
     }
 
     private func store(entries: [String: IntradaySeriesCacheEntry]) {
@@ -118,6 +124,158 @@ final class StockChartSeriesCacheStore {
         }
         defaults.set(data, forKey: Key.intradaySeriesCache)
         defaults.synchronize()
+
+        guard mirrorsSharedCache else { return }
+        for url in Self.sharedCacheURLs() {
+            Self.updateCacheFile(at: url, data: data)
+        }
+    }
+
+    private func cacheEntrySources() -> [[String: IntradaySeriesCacheEntry]] {
+        var sources: [[String: IntradaySeriesCacheEntry]] = []
+
+        if let data = defaults.data(forKey: Key.intradaySeriesCache),
+           let entries = Self.decodeEntries(from: data) {
+            sources.append(entries)
+        }
+
+        guard mirrorsSharedCache else { return sources }
+        for url in Self.sharedCacheURLs() {
+            guard let entries = Self.readCacheFile(at: url) else {
+                continue
+            }
+            sources.append(entries)
+        }
+
+        return sources
+    }
+
+    private static func mergedEntries(
+        _ existingEntries: [String: IntradaySeriesCacheEntry],
+        _ newEntries: [String: IntradaySeriesCacheEntry]
+    ) -> [String: IntradaySeriesCacheEntry] {
+        var mergedEntries = existingEntries
+        for (symbol, newEntry) in newEntries {
+            guard let existingEntry = mergedEntries[symbol] else {
+                mergedEntries[symbol] = newEntry
+                continue
+            }
+
+            guard existingEntry.dayIdentifier == newEntry.dayIdentifier,
+                  existingEntry.timeZoneIdentifier == newEntry.timeZoneIdentifier else {
+                mergedEntries[symbol] = newerEntry(existingEntry, newEntry)
+                continue
+            }
+
+            var candlesByTimestamp: [Date: IntradayCandle] = [:]
+            for candle in existingEntry.candles {
+                candlesByTimestamp[candle.timestamp] = candle
+            }
+            for candle in newEntry.candles {
+                candlesByTimestamp[candle.timestamp] = candle
+            }
+
+            mergedEntries[symbol] = IntradaySeriesCacheEntry(
+                symbol: symbol,
+                dayIdentifier: existingEntry.dayIdentifier,
+                timeZoneIdentifier: existingEntry.timeZoneIdentifier,
+                isComplete: existingEntry.isComplete || newEntry.isComplete,
+                candles: candlesByTimestamp.values.sorted { $0.timestamp < $1.timestamp }
+            )
+        }
+        return mergedEntries
+    }
+
+    private static func newerEntry(
+        _ lhs: IntradaySeriesCacheEntry,
+        _ rhs: IntradaySeriesCacheEntry
+    ) -> IntradaySeriesCacheEntry {
+        let lhsTimestamp = lhs.candles.map(\.timestamp).max() ?? .distantPast
+        let rhsTimestamp = rhs.candles.map(\.timestamp).max() ?? .distantPast
+        return rhsTimestamp >= lhsTimestamp ? rhs : lhs
+    }
+
+    private static func decodeEntries(from data: Data) -> [String: IntradaySeriesCacheEntry]? {
+        try? PropertyListDecoder().decode([String: IntradaySeriesCacheEntry].self, from: data)
+    }
+
+    private static func readCacheFile(at url: URL) -> [String: IntradaySeriesCacheEntry]? {
+        guard let preferences = readPreferenceFile(at: url),
+              let data = preferences[Key.intradaySeriesCache] as? Data else {
+            return nil
+        }
+        return decodeEntries(from: data)
+    }
+
+    private static func updateCacheFile(at url: URL, data: Data) {
+        updatePreferenceFile(at: url) { preferences in
+            preferences[Key.intradaySeriesCache] = data
+        }
+    }
+
+    private static func sharedCacheURLs() -> [URL] {
+        var seen = Set<String>()
+        return [hostCacheURL, screenSaverCacheURL]
+            .filter { seen.insert($0.standardizedFileURL.path).inserted }
+    }
+
+    private static var hostCacheURL: URL {
+        realHomeDirectory
+            .appendingPathComponent("Library/Preferences", isDirectory: true)
+            .appendingPathComponent("\(suiteName).plist")
+    }
+
+    private static var screenSaverCacheURL: URL {
+        realHomeDirectory
+            .appendingPathComponent("Library/Containers/com.apple.ScreenSaver.Engine.legacyScreenSaver/Data/Library/Preferences", isDirectory: true)
+            .appendingPathComponent("\(suiteName).plist")
+    }
+
+    private static var realHomeDirectory: URL {
+        if let passwordEntry = getpwuid(getuid()),
+           let homeDirectory = passwordEntry.pointee.pw_dir {
+            return URL(fileURLWithPath: String(cString: homeDirectory), isDirectory: true)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
+    }
+
+    private static func readPreferenceFile(at url: URL) -> [String: Any]? {
+        guard let data = try? Data(contentsOf: url),
+              let preferences = try? PropertyListSerialization.propertyList(
+                from: data,
+                options: [],
+                format: nil
+              ) as? [String: Any] else {
+            return nil
+        }
+        return preferences
+    }
+
+    private static func updatePreferenceFile(
+        at url: URL,
+        update: (inout [String: Any]) -> Void
+    ) {
+        let fileManager = FileManager.default
+        do {
+            try fileManager.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+
+            var preferences: [String: Any] = [:]
+            if let storedPreferences = readPreferenceFile(at: url) {
+                preferences = storedPreferences
+            }
+
+            update(&preferences)
+
+            let data = try PropertyListSerialization.data(
+                fromPropertyList: preferences,
+                format: .binary,
+                options: 0
+            )
+            try data.write(to: url, options: .atomic)
+        } catch {}
     }
 
     static func dayIdentifier(for date: Date, timeZone: TimeZone) -> String {

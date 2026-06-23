@@ -255,7 +255,8 @@ final class TossInvestMarketDataClient {
         let series = await intradaySeriesForSnapshot(
             symbol: price.symbol,
             token: token,
-            venue: tradingVenue
+            venue: tradingVenue,
+            latestQuoteTimestamp: price.timestamp
         )
         let changePercent = changePercent(
             price: price.lastPrice,
@@ -276,14 +277,36 @@ final class TossInvestMarketDataClient {
     private func intradaySeriesForSnapshot(
         symbol: String,
         token: String,
-        venue: TradingVenue
+        venue: TradingVenue,
+        latestQuoteTimestamp: Date?
     ) async -> StockChartSeries {
-        if let series = try? await fetchIntradaySeries(symbol: symbol, token: token, venue: venue) {
-            return series
+        if let cachedEntry = cachedActiveIntradayEntry(symbol: symbol, venue: venue) {
+            let latestCachedTimestamp = cachedEntry.candles.map(\.timestamp).max()
+            let shouldFetchNewCandles = latestQuoteTimestamp.map { quoteTimestamp in
+                latestCachedTimestamp.map { quoteTimestamp > $0 } ?? true
+            } ?? false
+
+            if !shouldFetchNewCandles {
+                return makeIntradaySeries(
+                    symbol: symbol,
+                    venue: venue,
+                    candles: cachedEntry.candles
+                )
+            }
+
+            if let series = try? await fetchIntradaySeries(symbol: symbol, token: token, venue: venue) {
+                return series
+            }
+
+            return makeIntradaySeries(
+                symbol: symbol,
+                venue: venue,
+                candles: cachedEntry.candles
+            )
         }
 
-        if let cachedSeries = cachedActiveIntradaySeries(symbol: symbol, venue: venue) {
-            return cachedSeries
+        if let series = try? await fetchIntradaySeries(symbol: symbol, token: token, venue: venue) {
+            return series
         }
 
         return StockChartSeries(symbol: symbol, points: [])
@@ -463,19 +486,11 @@ final class TossInvestMarketDataClient {
         )
     }
 
-    private func cachedActiveIntradaySeries(symbol: String, venue: TradingVenue) -> StockChartSeries? {
+    private func cachedActiveIntradayEntry(symbol: String, venue: TradingVenue) -> IntradaySeriesCacheEntry? {
         let marketTimeZone = Self.marketTimeZone(for: venue)
-        guard let cachedEntry = chartSeriesCacheStore.activeSessionEntry(
+        return chartSeriesCacheStore.activeSessionEntry(
             for: symbol,
             timeZoneIdentifier: marketTimeZone.identifier
-        ) else {
-            return nil
-        }
-
-        return makeIntradaySeries(
-            symbol: symbol,
-            venue: venue,
-            candles: cachedEntry.candles
         )
     }
 
