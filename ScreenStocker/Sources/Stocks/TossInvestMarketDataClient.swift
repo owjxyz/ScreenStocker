@@ -9,6 +9,61 @@ protocol TossInvestCredentialsProviding {
     var credentials: TossInvestCredentials? { get }
 }
 
+private actor TossInvestAccessTokenCache {
+    private struct CachedToken {
+        let credentials: TossInvestCredentials
+        let value: String
+        let expiresAt: Date
+    }
+
+    private var cachedToken: CachedToken?
+    private var inFlightTask: Task<(String, Date), Error>?
+    private var inFlightCredentials: TossInvestCredentials?
+
+    func token(
+        for credentials: TossInvestCredentials,
+        now: Date,
+        issue: @escaping () async throws -> (String, Date)
+    ) async throws -> String {
+        if let cachedToken,
+           cachedToken.credentials == credentials,
+           cachedToken.expiresAt > now {
+            return cachedToken.value
+        }
+
+        if let inFlightTask {
+            if inFlightCredentials == credentials {
+                return try await inFlightTask.value.0
+            }
+
+            _ = try? await inFlightTask.value
+            return try await token(for: credentials, now: now, issue: issue)
+        }
+
+        let task = Task {
+            try await issue()
+        }
+        inFlightTask = task
+        inFlightCredentials = credentials
+
+        do {
+            let issuedToken = try await task.value
+            cachedToken = CachedToken(
+                credentials: credentials,
+                value: issuedToken.0,
+                expiresAt: issuedToken.1
+            )
+            inFlightTask = nil
+            inFlightCredentials = nil
+            return issuedToken.0
+        } catch {
+            inFlightTask = nil
+            inFlightCredentials = nil
+            throw error
+        }
+    }
+}
+
 enum TossInvestMarketDataError: LocalizedError {
     case missingCredentials
     case invalidResponse
@@ -57,9 +112,11 @@ final class TossInvestMarketDataClient {
 
     private struct TokenResponse: Decodable {
         let accessToken: String
+        let expiresIn: TimeInterval?
 
         private enum CodingKeys: String, CodingKey {
             case accessToken = "access_token"
+            case expiresIn = "expires_in"
         }
     }
 
@@ -207,10 +264,13 @@ final class TossInvestMarketDataClient {
     private let session: URLSession
     private let chartSeriesCacheStore: StockChartSeriesCacheStore
     private let currentDate: () -> Date
+    private let accessTokenCache = TossInvestAccessTokenCache()
     private let baseURL = URL(string: "https://openapi.tossinvest.com")!
     private let decoder: JSONDecoder
     private static let maximumIntradayCandleGap: TimeInterval = 5 * 60
     private static let maximumDailyCloseCacheAge: TimeInterval = 14 * 24 * 60 * 60
+    private static let defaultAccessTokenLifetime: TimeInterval = 50 * 60
+    private static let accessTokenExpiryLeeway: TimeInterval = 60
 
     init(
         credentialsStore: any TossInvestCredentialsProviding = TossInvestCredentialsStore(),
@@ -256,52 +316,42 @@ final class TossInvestMarketDataClient {
         })
     }
 
+    func chartSeries(for quote: StockQuote) async -> StockChartSeries {
+        let venue = tradingVenue(for: quote.symbol, market: quote.exchangeLabel)
+        let sessionKind = activeSessionKind(for: venue, referenceDate: currentDate())
+
+        return await intradaySeriesForSnapshot(
+            symbol: quote.symbol,
+            venue: venue,
+            sessionKind: sessionKind,
+            latestQuoteTimestamp: quote.timestamp
+        )
+    }
+
     func snapshot(for symbol: String) async throws -> StockMarketSnapshot {
         let normalizedSymbol = symbol.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         guard !normalizedSymbol.isEmpty else {
             throw TossInvestMarketDataError.invalidResponse
         }
 
-        let token = try await issueAccessToken()
-        let stockInfos = (try? await fetchStockInfos(symbols: [normalizedSymbol], token: token)) ?? []
-        let stockInfo = stockInfos.first
-        guard let price = try await fetchPrices(symbols: [normalizedSymbol], token: token).first else {
+        guard let quote = try await quotes(for: [normalizedSymbol])[normalizedSymbol] else {
             throw TossInvestMarketDataError.invalidResponse
         }
-
-        let tradingVenue = tradingVenue(for: price.symbol, market: stockInfo?.market)
-        let sessionKind = activeSessionKind(for: tradingVenue, referenceDate: currentDate())
-        let dailyCandles = await dailyCandles(for: price, token: token)
-        let series = await intradaySeriesForSnapshot(
-            symbol: price.symbol,
-            token: token,
-            venue: tradingVenue,
-            sessionKind: sessionKind,
-            latestQuoteTimestamp: price.timestamp
+        let series = await chartSeries(for: quote)
+        let refreshedQuote = StockQuote(
+            symbol: quote.symbol,
+            displayName: quote.displayName,
+            exchangeLabel: series.trackingExchangeLabel ?? quote.exchangeLabel,
+            price: quote.price,
+            changePercent: quote.changePercent,
+            currency: quote.currency,
+            timestamp: quote.timestamp
         )
-        let changePercent = changePercent(
-            price: price.lastPrice,
-            baseline: previousClose(
-                for: price,
-                dailyCandles: dailyCandles,
-                venue: tradingVenue
-            )
-        )
-        let quote = StockQuote(
-            symbol: price.symbol,
-            displayName: stockInfo?.localizedDisplayName,
-            exchangeLabel: series.trackingExchangeLabel ?? marketLabel(for: stockInfo?.market, symbol: price.symbol),
-            price: price.lastPrice,
-            changePercent: changePercent,
-            currency: price.currency,
-            timestamp: price.timestamp
-        )
-        return StockMarketSnapshot(quote: quote, series: series)
+        return StockMarketSnapshot(quote: refreshedQuote, series: series)
     }
 
     private func intradaySeriesForSnapshot(
         symbol: String,
-        token: String,
         venue: TradingVenue,
         sessionKind: TradingSessionKind,
         latestQuoteTimestamp: Date?
@@ -327,7 +377,8 @@ final class TossInvestMarketDataClient {
                 )
             }
 
-            if let series = try? await fetchIntradaySeries(
+            if let token = try? await issueAccessToken(),
+               let series = try? await fetchIntradaySeries(
                 symbol: symbol,
                 token: token,
                 venue: venue,
@@ -344,7 +395,8 @@ final class TossInvestMarketDataClient {
             )
         }
 
-        if let series = try? await fetchIntradaySeries(
+        if let token = try? await issueAccessToken(),
+           let series = try? await fetchIntradaySeries(
             symbol: symbol,
             token: token,
             venue: venue,
@@ -403,6 +455,16 @@ final class TossInvestMarketDataClient {
             throw TossInvestMarketDataError.missingCredentials
         }
 
+        let now = currentDate()
+        return try await accessTokenCache.token(for: credentials, now: now) { [self] in
+            let response = try await requestAccessToken(credentials: credentials)
+            let lifetime = response.expiresIn ?? Self.defaultAccessTokenLifetime
+            let usableLifetime = max(lifetime - Self.accessTokenExpiryLeeway, 60)
+            return (response.accessToken, now.addingTimeInterval(usableLifetime))
+        }
+    }
+
+    private func requestAccessToken(credentials: TossInvestCredentials) async throws -> TokenResponse {
         var components = URLComponents()
         components.queryItems = [
             URLQueryItem(name: "grant_type", value: "client_credentials"),
@@ -416,7 +478,7 @@ final class TossInvestMarketDataClient {
         request.httpBody = components.percentEncodedQuery?.data(using: .utf8)
 
         let data = try await validatedData(for: request)
-        return try decoder.decode(TokenResponse.self, from: data).accessToken
+        return try decoder.decode(TokenResponse.self, from: data)
     }
 
     private func fetchPrices(symbols: [String], token: String) async throws -> [PriceResponse] {

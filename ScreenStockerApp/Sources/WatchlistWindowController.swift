@@ -82,7 +82,6 @@ final class WatchlistViewModel: ObservableObject {
     @Published var hasTossCredentials: Bool
     @Published var marketSnapshots: [String: StockMarketSnapshot] = [:]
     @Published var isRefreshingMarketData = false
-    @Published var isRefreshingSelectedChart = false
     @Published var isAddingSymbol = false
     @Published var isReorderingSymbols = false
     @Published var draggedSymbol: String?
@@ -98,10 +97,11 @@ final class WatchlistViewModel: ObservableObject {
     private let marketDataClient = TossInvestMarketDataClient()
     private let installer = ScreenSaverInstaller()
     private var chartStyleWindowController: ChartStyleWindowController?
-    private var selectedChartTask: Task<Void, Never>?
+    private var pendingMarketDataRefresh = false
+    private var marketDataRefreshTask: Task<Void, Never>?
 
     deinit {
-        selectedChartTask?.cancel()
+        marketDataRefreshTask?.cancel()
     }
 
     init(preferences: StockerPreferences) {
@@ -137,7 +137,7 @@ final class WatchlistViewModel: ObservableObject {
         selectedSymbol = symbol
         preferences.selectedSymbol = symbol
         statusMessage = "\(symbol) selected for the screen saver."
-        scheduleSelectedChartRefresh()
+        scheduleMarketDataRefresh()
     }
 
     func performAction(_ title: String) {
@@ -175,14 +175,6 @@ final class WatchlistViewModel: ObservableObject {
             isAddSymbolSheetPresented = false
             symbolToAdd = ""
             statusMessage = "\(stockInfo.displayTitle) added to the watchlist."
-
-            let quotes = try? await marketDataClient.quotes(for: [stockInfo.symbol])
-            if let quote = quotes?[stockInfo.symbol] {
-                marketSnapshots[stockInfo.symbol] = StockMarketSnapshot(
-                    quote: quote,
-                    series: StockChartSeries(symbol: stockInfo.symbol, points: [])
-                )
-            }
         } catch {
             addSymbolErrorMessage = error.localizedDescription
             statusMessage = "Add Symbol failed: \(error.localizedDescription)"
@@ -265,18 +257,48 @@ final class WatchlistViewModel: ObservableObject {
     }
 
     func refreshMarketData() async {
-        guard !isRefreshingMarketData else { return }
+        guard !isRefreshingMarketData else {
+            pendingMarketDataRefresh = true
+            return
+        }
         isRefreshingMarketData = true
-        defer { isRefreshingMarketData = false }
+        defer {
+            isRefreshingMarketData = false
+            if pendingMarketDataRefresh {
+                pendingMarketDataRefresh = false
+                scheduleMarketDataRefresh()
+            }
+        }
         statusMessage = "Refreshing market data..."
 
         do {
+            let requestedSymbol = selectedSymbol
             let quotes = try await marketDataClient.quotes(for: symbols)
             guard !Task.isCancelled else { return }
             marketSnapshots = mergedSnapshots(with: quotes)
+
+            if let selectedQuote = marketSnapshots[requestedSymbol]?.quote {
+                let series = await marketDataClient.chartSeries(for: selectedQuote)
+                guard !Task.isCancelled else { return }
+                if !series.points.isEmpty {
+                    let currentQuote = marketSnapshots[requestedSymbol]?.quote ?? selectedQuote
+                    marketSnapshots[requestedSymbol] = StockMarketSnapshot(
+                        quote: StockQuote(
+                            symbol: currentQuote.symbol,
+                            displayName: currentQuote.displayName,
+                            exchangeLabel: series.trackingExchangeLabel ?? currentQuote.exchangeLabel,
+                            price: currentQuote.price,
+                            changePercent: currentQuote.changePercent,
+                            currency: currentQuote.currency,
+                            timestamp: currentQuote.timestamp
+                        ),
+                        series: series
+                    )
+                }
+            }
+
             marketDataErrorMessage = nil
             statusMessage = "Market data refreshed."
-            scheduleSelectedChartRefresh()
         } catch {
             guard !Task.isCancelled else { return }
             marketDataErrorMessage = error.localizedDescription
@@ -296,52 +318,16 @@ final class WatchlistViewModel: ObservableObject {
         }
     }
 
-    private func scheduleSelectedChartRefresh() {
-        selectedChartTask?.cancel()
-
-        let symbol = selectedSymbol
-        guard !symbol.isEmpty else { return }
-
-        selectedChartTask = Task { [weak self] in
-            await self?.refreshSelectedChart(for: symbol)
+    private func scheduleMarketDataRefresh() {
+        marketDataRefreshTask?.cancel()
+        marketDataRefreshTask = Task { [weak self] in
+            await self?.refreshMarketData()
         }
     }
 
-    private func refreshSelectedChart(for symbol: String) async {
-        isRefreshingSelectedChart = true
-        defer {
-            if selectedSymbol == symbol {
-                isRefreshingSelectedChart = false
-            }
-        }
-
-        do {
-            let snapshot = try await marketDataClient.snapshot(for: symbol)
-            guard !Task.isCancelled, selectedSymbol == symbol else { return }
-            let existingChangePercent = marketSnapshots[symbol]?.quote.changePercent
-            let refreshedQuote = StockQuote(
-                symbol: snapshot.quote.symbol,
-                displayName: snapshot.quote.displayName,
-                exchangeLabel: snapshot.quote.exchangeLabel,
-                price: snapshot.quote.price,
-                changePercent: snapshot.quote.changePercent ?? existingChangePercent,
-                currency: snapshot.quote.currency,
-                timestamp: snapshot.quote.timestamp
-            )
-            marketSnapshots[symbol] = StockMarketSnapshot(
-                quote: refreshedQuote,
-                series: snapshot.series
-            )
-            marketDataErrorMessage = nil
-            statusMessage = "Selected symbol chart refreshed."
-        } catch {
-            guard !Task.isCancelled, selectedSymbol == symbol else { return }
-            marketDataErrorMessage = error.localizedDescription
-            statusMessage = "Selected symbol chart refresh failed: \(error.localizedDescription)"
-        }
-    }
-
-    private func mergedSnapshots(with quotes: [String: StockQuote]) -> [String: StockMarketSnapshot] {
+    private func mergedSnapshots(
+        with quotes: [String: StockQuote]
+    ) -> [String: StockMarketSnapshot] {
         Dictionary(uniqueKeysWithValues: symbols.compactMap { symbol in
             guard let quote = quotes[symbol] else {
                 return marketSnapshots[symbol].map { (symbol, $0) }

@@ -10,6 +10,94 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         MockTossInvestURLProtocol.priceTimestamps = []
     }
 
+    func testAccessTokenIsReusedAcrossRefreshes() async throws {
+        let defaults = UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID().uuidString)")!
+        let client = TossInvestMarketDataClient(
+            credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
+            session: Self.makeSession(),
+            chartSeriesCacheStore: StockChartSeriesCacheStore(defaults: defaults)
+        )
+        MockTossInvestURLProtocol.candle1dResponse = Self.makeDailyCandlePageData()
+
+        _ = try await client.quotes(for: ["005930"])
+        _ = try await client.quotes(for: ["005930"])
+
+        XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["token"], 1)
+        XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["prices"], 2)
+    }
+
+    func testSeparatedQuoteAndChartRefreshFetchesPricesOnce() async throws {
+        let defaults = UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID().uuidString)")!
+        let client = TossInvestMarketDataClient(
+            credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
+            session: Self.makeSession(),
+            chartSeriesCacheStore: StockChartSeriesCacheStore(defaults: defaults)
+        )
+        MockTossInvestURLProtocol.candle1dResponse = Self.makeDailyCandlePageData()
+        MockTossInvestURLProtocol.candle1mResponses = [
+            Self.makeCandlePageData(
+                candles: Self.candles([Date(timeIntervalSince1970: 1_719_020_400)]),
+                nextBefore: nil
+            )
+        ]
+
+        let quotes = try await client.quotes(for: ["005930"])
+        let series = await client.chartSeries(for: try XCTUnwrap(quotes["005930"]))
+
+        XCTAssertFalse(series.points.isEmpty)
+        XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["token"], 1)
+        XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["stocks"], 1)
+        XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["prices"], 1)
+    }
+
+    func testChartSeriesUsesFreshCacheBeforeRequestingTokenOrCandles() async throws {
+        let defaults = UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID().uuidString)")!
+        let cacheStore = StockChartSeriesCacheStore(defaults: defaults)
+        let timeZone = TimeZone(identifier: "Asia/Seoul")!
+        let currentDate = Self.date(year: 2026, month: 6, day: 24, hour: 10, timeZone: timeZone)
+        let dayIdentifier = StockChartSeriesCacheStore.dayIdentifier(for: currentDate, timeZone: timeZone)
+        cacheStore.save(
+            candles: [
+                IntradayCandle(
+                    timestamp: currentDate,
+                    openPrice: 100,
+                    highPrice: 101,
+                    lowPrice: 99,
+                    closePrice: 100,
+                    market: "KRX",
+                    exchange: "KRX",
+                    venue: "KRX"
+                )
+            ],
+            isComplete: true,
+            for: "005930",
+            dayIdentifier: dayIdentifier,
+            timeZoneIdentifier: timeZone.identifier,
+            referenceDate: currentDate
+        )
+        let client = TossInvestMarketDataClient(
+            credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
+            session: Self.makeSession(),
+            chartSeriesCacheStore: cacheStore,
+            currentDate: { currentDate }
+        )
+        let quote = StockQuote(
+            symbol: "005930",
+            displayName: "Samsung Electronics",
+            exchangeLabel: "KRX",
+            price: 100,
+            changePercent: 0,
+            currency: "KRW",
+            timestamp: currentDate
+        )
+
+        let series = await client.chartSeries(for: quote)
+
+        XCTAssertFalse(series.points.isEmpty)
+        XCTAssertNil(MockTossInvestURLProtocol.requestCounts["token"])
+        XCTAssertNil(MockTossInvestURLProtocol.requestCounts["1m"])
+    }
+
     func testQuotesReuseCachedDailyClosesWhenDailyCandleRequestFails() async throws {
         let defaults = UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID().uuidString)")!
         let cacheStore = StockChartSeriesCacheStore(defaults: defaults)
@@ -52,11 +140,18 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = marketTimeZone
         let today = calendar.startOfDay(for: Date())
+        let currentDate = calendar.date(byAdding: .hour, value: 10, to: today)!
+            .addingTimeInterval(20 * 60)
         let client = TossInvestMarketDataClient(
             credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
             session: session,
-            chartSeriesCacheStore: cacheStore
+            chartSeriesCacheStore: cacheStore,
+            currentDate: { currentDate }
         )
+        MockTossInvestURLProtocol.priceTimestamps = [
+            Self.isoFormatter.string(from: currentDate),
+            Self.isoFormatter.string(from: currentDate)
+        ]
 
         MockTossInvestURLProtocol.candle1mResponses = [
             Self.makeCandlePageData(
@@ -636,10 +731,13 @@ private final class MockTossInvestURLProtocol: URLProtocol {
 
         switch path {
         case "/oauth2/token":
+            Self.requestCounts["token", default: 0] += 1
             response = Self.tokenResponse()
         case "/api/v1/stocks":
+            Self.requestCounts["stocks", default: 0] += 1
             response = Self.stockInfoResponse(for: Self.requestedSymbol(from: url))
         case "/api/v1/prices":
+            Self.requestCounts["prices", default: 0] += 1
             response = Self.priceResponse(for: Self.requestedSymbol(from: url))
         case "/api/v1/candles":
             let interval = URLComponents(url: url, resolvingAgainstBaseURL: false)?
@@ -675,7 +773,10 @@ private final class MockTossInvestURLProtocol: URLProtocol {
     override func stopLoading() {}
 
     private static func tokenResponse() -> Data {
-        try! JSONSerialization.data(withJSONObject: ["access_token": "token"], options: [])
+        try! JSONSerialization.data(
+            withJSONObject: ["access_token": "token", "expires_in": 3_600],
+            options: []
+        )
     }
 
     private static func stockInfoResponse(for symbol: String) -> Data {
