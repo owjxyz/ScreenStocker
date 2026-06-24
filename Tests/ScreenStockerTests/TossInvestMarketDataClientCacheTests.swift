@@ -10,6 +10,40 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         MockTossInvestURLProtocol.priceTimestamps = []
     }
 
+    func testQuotesReuseCachedDailyClosesWhenDailyCandleRequestFails() async throws {
+        let defaults = UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID().uuidString)")!
+        let cacheStore = StockChartSeriesCacheStore(defaults: defaults)
+        let session = Self.makeSession()
+        let timeZone = TimeZone(identifier: "Asia/Seoul")!
+        let priceTimestamp = Self.date(year: 2026, month: 6, day: 24, hour: 10, timeZone: timeZone)
+        let currentDay = Self.date(year: 2026, month: 6, day: 24, hour: 0, timeZone: timeZone)
+        let previousDay = Self.date(year: 2026, month: 6, day: 23, hour: 0, timeZone: timeZone)
+        let client = TossInvestMarketDataClient(
+            credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
+            session: session,
+            chartSeriesCacheStore: cacheStore
+        )
+
+        MockTossInvestURLProtocol.priceTimestamps = [
+            Self.isoFormatter.string(from: priceTimestamp),
+            Self.isoFormatter.string(from: priceTimestamp)
+        ]
+        MockTossInvestURLProtocol.candle1dResponse = Self.makeCandlePageData(
+            candles: Self.candles(
+                [currentDay, previousDay],
+                closePrice: ["70000", "68000"]
+            ),
+            nextBefore: nil
+        )
+
+        let firstQuotes = try await client.quotes(for: ["005930"])
+        MockTossInvestURLProtocol.candle1dResponse = nil
+        let secondQuotes = try await client.quotes(for: ["005930"])
+
+        XCTAssertEqual(firstQuotes["005930"]?.changePercent, secondQuotes["005930"]?.changePercent)
+        XCTAssertNotNil(secondQuotes["005930"]?.changePercent)
+    }
+
     func testIntradaySeriesUsesCachedMarketDataAfterInitialBackfill() async throws {
         let defaults = UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID().uuidString)")!
         let cacheStore = StockChartSeriesCacheStore(defaults: defaults)

@@ -49,6 +49,8 @@ private final class ChartStyleWindowController: NSWindowController {
 
 @MainActor
 final class WatchlistViewModel: ObservableObject {
+    private static let marketDataRefreshInterval: UInt64 = 60_000_000_000
+
     enum Section: String, CaseIterable, Identifiable {
         case overview = "Overview"
         case watchlist = "Watchlist"
@@ -265,20 +267,33 @@ final class WatchlistViewModel: ObservableObject {
     func refreshMarketData() async {
         guard !isRefreshingMarketData else { return }
         isRefreshingMarketData = true
+        defer { isRefreshingMarketData = false }
         statusMessage = "Refreshing market data..."
 
         do {
             let quotes = try await marketDataClient.quotes(for: symbols)
+            guard !Task.isCancelled else { return }
             marketSnapshots = mergedSnapshots(with: quotes)
             marketDataErrorMessage = nil
             statusMessage = "Market data refreshed."
             scheduleSelectedChartRefresh()
         } catch {
+            guard !Task.isCancelled else { return }
             marketDataErrorMessage = error.localizedDescription
             statusMessage = "Market data refresh failed: \(error.localizedDescription)"
         }
+    }
 
-        isRefreshingMarketData = false
+    func runMarketDataRefreshLoop() async {
+        while !Task.isCancelled {
+            await refreshMarketData()
+
+            do {
+                try await Task.sleep(nanoseconds: Self.marketDataRefreshInterval)
+            } catch {
+                return
+            }
+        }
     }
 
     private func scheduleSelectedChartRefresh() {
@@ -303,7 +318,20 @@ final class WatchlistViewModel: ObservableObject {
         do {
             let snapshot = try await marketDataClient.snapshot(for: symbol)
             guard !Task.isCancelled, selectedSymbol == symbol else { return }
-            marketSnapshots[symbol] = snapshot
+            let existingChangePercent = marketSnapshots[symbol]?.quote.changePercent
+            let refreshedQuote = StockQuote(
+                symbol: snapshot.quote.symbol,
+                displayName: snapshot.quote.displayName,
+                exchangeLabel: snapshot.quote.exchangeLabel,
+                price: snapshot.quote.price,
+                changePercent: snapshot.quote.changePercent ?? existingChangePercent,
+                currency: snapshot.quote.currency,
+                timestamp: snapshot.quote.timestamp
+            )
+            marketSnapshots[symbol] = StockMarketSnapshot(
+                quote: refreshedQuote,
+                series: snapshot.series
+            )
             marketDataErrorMessage = nil
             statusMessage = "Selected symbol chart refreshed."
         } catch {
@@ -480,7 +508,7 @@ private struct WatchlistRootView: View {
             }
         }
         .task {
-            await viewModel.refreshMarketData()
+            await viewModel.runMarketDataRefreshLoop()
         }
         .sheet(isPresented: $viewModel.isAddSymbolSheetPresented) {
             AddSymbolSheet(viewModel: viewModel)

@@ -57,9 +57,15 @@ struct IntradaySeriesCacheEntry: Codable, Equatable {
     }
 }
 
+struct DailyCloseCacheEntry: Codable, Equatable {
+    let timestamp: Date
+    let closePrice: Decimal
+}
+
 final class StockChartSeriesCacheStore {
     private enum Key {
         static let intradaySeriesCache = "intradaySeriesCache"
+        static let dailyCloseCache = "dailyCloseCache"
     }
 
     private static let suiteName = "com.tasokiii.ScreenStocker.marketDataCache"
@@ -173,6 +179,28 @@ final class StockChartSeriesCacheStore {
         store(entries: entries)
     }
 
+    func dailyCloses(for symbol: String) -> [DailyCloseCacheEntry] {
+        loadDailyCloseEntries()?[symbol] ?? []
+    }
+
+    func saveDailyCloses(_ closes: [DailyCloseCacheEntry], for symbol: String) {
+        guard !closes.isEmpty else { return }
+
+        var entries = loadDailyCloseEntries() ?? [:]
+        var closesByTimestamp = Dictionary(
+            uniqueKeysWithValues: (entries[symbol] ?? []).map { ($0.timestamp, $0) }
+        )
+        for close in closes {
+            closesByTimestamp[close.timestamp] = close
+        }
+        entries[symbol] = Array(
+            closesByTimestamp.values
+                .sorted { $0.timestamp > $1.timestamp }
+                .prefix(10)
+        )
+        storeDailyCloseEntries(entries)
+    }
+
     func pruneStaleEntries(referenceDate: Date = Date()) {
         guard var entries = loadEntries() else { return }
 
@@ -238,6 +266,41 @@ final class StockChartSeriesCacheStore {
         }
     }
 
+    private func loadDailyCloseEntries() -> [String: [DailyCloseCacheEntry]]? {
+        var mergedEntries: [String: [DailyCloseCacheEntry]] = [:]
+
+        for entries in dailyCloseEntrySources() {
+            for (symbol, closes) in entries {
+                var closesByTimestamp = Dictionary(
+                    uniqueKeysWithValues: (mergedEntries[symbol] ?? []).map { ($0.timestamp, $0) }
+                )
+                for close in closes {
+                    closesByTimestamp[close.timestamp] = close
+                }
+                mergedEntries[symbol] = Array(
+                    closesByTimestamp.values
+                        .sorted { $0.timestamp > $1.timestamp }
+                        .prefix(10)
+                )
+            }
+        }
+
+        return mergedEntries.isEmpty ? nil : mergedEntries
+    }
+
+    private func storeDailyCloseEntries(_ entries: [String: [DailyCloseCacheEntry]]) {
+        guard let data = try? PropertyListEncoder().encode(entries) else {
+            return
+        }
+        defaults.set(data, forKey: Key.dailyCloseCache)
+        defaults.synchronize()
+
+        guard mirrorsSharedCache else { return }
+        for url in Self.sharedCacheURLs() {
+            Self.updateDailyCloseCacheFile(at: url, data: data)
+        }
+    }
+
     private func cacheEntrySources() -> [[String: IntradaySeriesCacheEntry]] {
         var sources: [[String: IntradaySeriesCacheEntry]] = []
 
@@ -249,6 +312,25 @@ final class StockChartSeriesCacheStore {
         guard mirrorsSharedCache else { return sources }
         for url in Self.sharedCacheURLs() {
             guard let entries = Self.readCacheFile(at: url) else {
+                continue
+            }
+            sources.append(entries)
+        }
+
+        return sources
+    }
+
+    private func dailyCloseEntrySources() -> [[String: [DailyCloseCacheEntry]]] {
+        var sources: [[String: [DailyCloseCacheEntry]]] = []
+
+        if let data = defaults.data(forKey: Key.dailyCloseCache),
+           let entries = Self.decodeDailyCloseEntries(from: data) {
+            sources.append(entries)
+        }
+
+        guard mirrorsSharedCache else { return sources }
+        for url in Self.sharedCacheURLs() {
+            guard let entries = Self.readDailyCloseCacheFile(at: url) else {
                 continue
             }
             sources.append(entries)
@@ -338,9 +420,27 @@ final class StockChartSeriesCacheStore {
         return decodeEntries(from: data)
     }
 
+    private static func decodeDailyCloseEntries(from data: Data) -> [String: [DailyCloseCacheEntry]]? {
+        try? PropertyListDecoder().decode([String: [DailyCloseCacheEntry]].self, from: data)
+    }
+
+    private static func readDailyCloseCacheFile(at url: URL) -> [String: [DailyCloseCacheEntry]]? {
+        guard let preferences = readPreferenceFile(at: url),
+              let data = preferences[Key.dailyCloseCache] as? Data else {
+            return nil
+        }
+        return decodeDailyCloseEntries(from: data)
+    }
+
     private static func updateCacheFile(at url: URL, data: Data) {
         updatePreferenceFile(at: url) { preferences in
             preferences[Key.intradaySeriesCache] = data
+        }
+    }
+
+    private static func updateDailyCloseCacheFile(at url: URL, data: Data) {
+        updatePreferenceFile(at: url) { preferences in
+            preferences[Key.dailyCloseCache] = data
         }
     }
 
