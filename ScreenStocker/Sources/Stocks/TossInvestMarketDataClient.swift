@@ -328,6 +328,46 @@ final class TossInvestMarketDataClient {
         )
     }
 
+    func cachedChartSeries(for symbol: String, exchangeLabel: String? = nil) -> StockChartSeries {
+        let normalizedSymbol = symbol.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard !normalizedSymbol.isEmpty else {
+            return StockChartSeries(symbol: symbol, points: [])
+        }
+
+        let venue = tradingVenue(for: normalizedSymbol, market: exchangeLabel)
+        let sessionKind = activeSessionKind(for: venue, referenceDate: currentDate())
+        let referenceDate = currentDate()
+
+        if let cachedEntry = cachedActiveIntradayEntry(
+            symbol: normalizedSymbol,
+            venue: venue,
+            sessionKind: sessionKind,
+            referenceDate: referenceDate
+        ) {
+            return makeIntradaySeries(
+                symbol: normalizedSymbol,
+                venue: venue,
+                sessionKind: sessionKind,
+                candles: cachedEntry.candles
+            )
+        }
+
+        if let latestEntry = latestIntradayEntry(
+            symbol: normalizedSymbol,
+            venue: venue,
+            sessionKind: sessionKind
+        ) {
+            return makeIntradaySeries(
+                symbol: normalizedSymbol,
+                venue: venue,
+                sessionKind: sessionKind,
+                candles: latestEntry.candles
+            )
+        }
+
+        return StockChartSeries(symbol: normalizedSymbol, points: [])
+    }
+
     func snapshot(for symbol: String) async throws -> StockMarketSnapshot {
         let normalizedSymbol = symbol.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         guard !normalizedSymbol.isEmpty else {

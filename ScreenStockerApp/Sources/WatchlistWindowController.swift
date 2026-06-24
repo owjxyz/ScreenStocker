@@ -47,6 +47,26 @@ private final class ChartStyleWindowController: NSWindowController {
     }
 }
 
+private actor CachedChartSeriesLoader {
+    private var marketDataClient: TossInvestMarketDataClient?
+
+    func series(for symbol: String, exchangeLabel: String?) -> StockChartSeries {
+        let marketDataClient: TossInvestMarketDataClient
+        if let existingClient = self.marketDataClient {
+            marketDataClient = existingClient
+        } else {
+            let newClient = TossInvestMarketDataClient()
+            self.marketDataClient = newClient
+            marketDataClient = newClient
+        }
+
+        return marketDataClient.cachedChartSeries(
+            for: symbol,
+            exchangeLabel: exchangeLabel
+        )
+    }
+}
+
 @MainActor
 final class WatchlistViewModel: ObservableObject {
     private static let marketDataRefreshInterval: UInt64 = 60_000_000_000
@@ -95,13 +115,16 @@ final class WatchlistViewModel: ObservableObject {
     private let preferences: StockerPreferences
     private let credentialsStore = TossInvestCredentialsStore()
     private let marketDataClient = TossInvestMarketDataClient()
+    private let cachedChartSeriesLoader = CachedChartSeriesLoader()
     private let installer = ScreenSaverInstaller()
     private var chartStyleWindowController: ChartStyleWindowController?
     private var pendingMarketDataRefresh = false
     private var marketDataRefreshTask: Task<Void, Never>?
+    private var cachedPreviewTask: Task<Void, Never>?
 
     deinit {
         marketDataRefreshTask?.cancel()
+        cachedPreviewTask?.cancel()
     }
 
     init(preferences: StockerPreferences) {
@@ -137,6 +160,7 @@ final class WatchlistViewModel: ObservableObject {
         selectedSymbol = symbol
         preferences.selectedSymbol = symbol
         statusMessage = "\(symbol) selected for the screen saver."
+        scheduleCachedPreview(for: symbol)
         scheduleMarketDataRefresh()
     }
 
@@ -322,6 +346,48 @@ final class WatchlistViewModel: ObservableObject {
         marketDataRefreshTask?.cancel()
         marketDataRefreshTask = Task { [weak self] in
             await self?.refreshMarketData()
+        }
+    }
+
+    private func scheduleCachedPreview(for symbol: String) {
+        cachedPreviewTask?.cancel()
+
+        let originalSnapshot = marketSnapshots[symbol]
+        let existingSnapshot = originalSnapshot
+            ?? StockMarketSnapshot(
+                quote: StockQuote.placeholder(symbol: symbol),
+                series: StockChartSeries(symbol: symbol, points: [])
+            )
+        let loader = cachedChartSeriesLoader
+
+        cachedPreviewTask = Task { [weak self] in
+            let cachedSeries = await loader.series(
+                for: symbol,
+                exchangeLabel: existingSnapshot.quote.exchangeLabel
+            )
+
+            guard
+                !Task.isCancelled,
+                let self,
+                self.selectedSymbol == symbol,
+                self.marketSnapshots[symbol] == originalSnapshot,
+                !cachedSeries.points.isEmpty
+            else {
+                return
+            }
+
+            self.marketSnapshots[symbol] = StockMarketSnapshot(
+                quote: StockQuote(
+                    symbol: existingSnapshot.quote.symbol,
+                    displayName: existingSnapshot.quote.displayName,
+                    exchangeLabel: cachedSeries.trackingExchangeLabel ?? existingSnapshot.quote.exchangeLabel,
+                    price: existingSnapshot.quote.price,
+                    changePercent: existingSnapshot.quote.changePercent,
+                    currency: existingSnapshot.quote.currency,
+                    timestamp: existingSnapshot.quote.timestamp
+                ),
+                series: cachedSeries
+            )
         }
     }
 

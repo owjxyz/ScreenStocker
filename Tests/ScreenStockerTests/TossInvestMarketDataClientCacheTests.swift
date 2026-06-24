@@ -50,6 +50,44 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["prices"], 1)
     }
 
+    func testCachedChartSeriesLoadsDiskCacheWithoutNetwork() throws {
+        let defaults = UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID().uuidString)")!
+        let cacheStore = StockChartSeriesCacheStore(defaults: defaults)
+        let timeZone = TimeZone(identifier: "Asia/Seoul")!
+        let currentDate = Self.date(year: 2026, month: 6, day: 24, hour: 10, timeZone: timeZone)
+        let dayIdentifier = StockChartSeriesCacheStore.dayIdentifier(for: currentDate, timeZone: timeZone)
+        cacheStore.save(
+            candles: [
+                IntradayCandle(
+                    timestamp: currentDate,
+                    openPrice: 100,
+                    highPrice: 101,
+                    lowPrice: 99,
+                    closePrice: 100,
+                    market: "KRX",
+                    exchange: "KRX",
+                    venue: "KRX"
+                )
+            ],
+            isComplete: true,
+            for: "005930",
+            dayIdentifier: dayIdentifier,
+            timeZoneIdentifier: timeZone.identifier,
+            referenceDate: currentDate
+        )
+        let client = TossInvestMarketDataClient(
+            credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
+            session: Self.makeSession(),
+            chartSeriesCacheStore: cacheStore,
+            currentDate: { currentDate }
+        )
+        let series = client.cachedChartSeries(for: "005930", exchangeLabel: "KRX")
+
+        XCTAssertFalse(series.points.isEmpty)
+        XCTAssertNil(MockTossInvestURLProtocol.requestCounts["token"])
+        XCTAssertNil(MockTossInvestURLProtocol.requestCounts["1m"])
+    }
+
     func testChartSeriesUsesFreshCacheBeforeRequestingTokenOrCandles() async throws {
         let defaults = UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID().uuidString)")!
         let cacheStore = StockChartSeriesCacheStore(defaults: defaults)
