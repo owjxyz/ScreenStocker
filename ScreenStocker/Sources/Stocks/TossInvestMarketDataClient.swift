@@ -62,11 +62,17 @@ private actor TossInvestAccessTokenCache {
             throw error
         }
     }
+
+    func invalidate(_ token: String) {
+        guard cachedToken?.value == token else { return }
+        cachedToken = nil
+    }
 }
 
 enum TossInvestMarketDataError: LocalizedError {
     case missingCredentials
     case invalidResponse
+    case authenticationRejected(String)
     case apiError(String)
 
     var errorDescription: String? {
@@ -75,9 +81,18 @@ enum TossInvestMarketDataError: LocalizedError {
             return "Toss Invest Open API credentials are missing."
         case .invalidResponse:
             return "The Toss Invest Open API response could not be read."
+        case .authenticationRejected(let message):
+            return message
         case .apiError(let message):
             return message
         }
+    }
+
+    var isAuthenticationRejection: Bool {
+        if case .authenticationRejected = self {
+            return true
+        }
+        return false
     }
 }
 
@@ -294,26 +309,27 @@ final class TossInvestMarketDataClient {
             .filter { !$0.isEmpty }
         guard !normalizedSymbols.isEmpty else { return [:] }
 
-        let token = try await issueAccessToken()
-        let stockInfos = (try? await fetchStockInfos(symbols: normalizedSymbols, token: token)) ?? []
-        let stockInfoBySymbol = Dictionary(uniqueKeysWithValues: stockInfos.map { ($0.symbol, $0) })
-        let prices = try await fetchPrices(symbols: normalizedSymbols, token: token)
-        let previousCloses = await previousDailyCloses(for: prices, token: token)
+        return try await withAccessTokenRetry { token in
+            let stockInfos = (try? await fetchStockInfos(symbols: normalizedSymbols, token: token)) ?? []
+            let stockInfoBySymbol = Dictionary(uniqueKeysWithValues: stockInfos.map { ($0.symbol, $0) })
+            let prices = try await fetchPrices(symbols: normalizedSymbols, token: token)
+            let previousCloses = await previousDailyCloses(for: prices, token: token)
 
-        return Dictionary(uniqueKeysWithValues: prices.map { price in
-            (
-                price.symbol,
-                StockQuote(
-                    symbol: price.symbol,
-                    displayName: stockInfoBySymbol[price.symbol]?.localizedDisplayName,
-                    exchangeLabel: marketLabel(for: stockInfoBySymbol[price.symbol]?.market, symbol: price.symbol),
-                    price: price.lastPrice,
-                    changePercent: changePercent(price: price.lastPrice, baseline: previousCloses[price.symbol]),
-                    currency: price.currency,
-                    timestamp: price.timestamp
+            return Dictionary(uniqueKeysWithValues: prices.map { price in
+                (
+                    price.symbol,
+                    StockQuote(
+                        symbol: price.symbol,
+                        displayName: stockInfoBySymbol[price.symbol]?.localizedDisplayName,
+                        exchangeLabel: marketLabel(for: stockInfoBySymbol[price.symbol]?.market, symbol: price.symbol),
+                        price: price.lastPrice,
+                        changePercent: changePercent(price: price.lastPrice, baseline: previousCloses[price.symbol]),
+                        currency: price.currency,
+                        timestamp: price.timestamp
+                    )
                 )
-            )
-        })
+            })
+        }
     }
 
     func chartSeries(for quote: StockQuote) async -> StockChartSeries {
@@ -405,13 +421,14 @@ final class TossInvestMarketDataClient {
                 )
             }
 
-            if let token = try? await issueAccessToken(),
-               let series = try? await fetchIntradaySeries(
-                symbol: symbol,
-                token: token,
-                venue: venue,
-                sessionKind: sessionKind
-            ), !series.points.isEmpty {
+            if let series = try? await withAccessTokenRetry(operation: { token in
+                try await fetchIntradaySeries(
+                    symbol: symbol,
+                    token: token,
+                    venue: venue,
+                    sessionKind: sessionKind
+                )
+            }), !series.points.isEmpty {
                 return series
             }
 
@@ -423,13 +440,14 @@ final class TossInvestMarketDataClient {
             )
         }
 
-        if let token = try? await issueAccessToken(),
-           let series = try? await fetchIntradaySeries(
-            symbol: symbol,
-            token: token,
-            venue: venue,
-            sessionKind: sessionKind
-        ), !series.points.isEmpty {
+        if let series = try? await withAccessTokenRetry(operation: { token in
+            try await fetchIntradaySeries(
+                symbol: symbol,
+                token: token,
+                venue: venue,
+                sessionKind: sessionKind
+            )
+        }), !series.points.isEmpty {
             return series
         }
 
@@ -457,11 +475,13 @@ final class TossInvestMarketDataClient {
             throw TossInvestMarketDataError.apiError(StockSymbolInput.validationMessage)
         }
 
-        let token = try await issueAccessToken()
-        guard let stockInfo = try await fetchStockInfos(symbols: [normalizedSymbol], token: token).first(where: {
-            $0.symbol.caseInsensitiveCompare(normalizedSymbol) == .orderedSame
-        }) else {
-            throw TossInvestMarketDataError.apiError("No stock was found for \(normalizedSymbol).")
+        let stockInfo = try await withAccessTokenRetry { token in
+            guard let stockInfo = try await fetchStockInfos(symbols: [normalizedSymbol], token: token).first(where: {
+                $0.symbol.caseInsensitiveCompare(normalizedSymbol) == .orderedSame
+            }) else {
+                throw TossInvestMarketDataError.apiError("No stock was found for \(normalizedSymbol).")
+            }
+            return stockInfo
         }
 
         guard stockInfo.status == "ACTIVE" else {
@@ -489,6 +509,20 @@ final class TossInvestMarketDataClient {
             let lifetime = response.expiresIn ?? Self.defaultAccessTokenLifetime
             let usableLifetime = max(lifetime - Self.accessTokenExpiryLeeway, 60)
             return (response.accessToken, now.addingTimeInterval(usableLifetime))
+        }
+    }
+
+    private func withAccessTokenRetry<T>(
+        operation: (String) async throws -> T
+    ) async throws -> T {
+        let token = try await issueAccessToken()
+
+        do {
+            return try await operation(token)
+        } catch let error as TossInvestMarketDataError where error.isAuthenticationRejection {
+            await accessTokenCache.invalidate(token)
+            let refreshedToken = try await issueAccessToken()
+            return try await operation(refreshedToken)
         }
     }
 
@@ -1215,17 +1249,40 @@ final class TossInvestMarketDataClient {
             if let oauthError = try? decoder.decode(OAuthErrorResponse.self, from: data),
                oauthError.error != nil || oauthError.errorDescription != nil {
                 let code = oauthError.error.map { "\($0): " } ?? ""
-                throw TossInvestMarketDataError.apiError("\(code)\(oauthError.errorDescription ?? "Request failed.")")
+                let message = "\(code)\(oauthError.errorDescription ?? "Request failed.")"
+                if Self.isAuthenticationRejection(statusCode: httpResponse.statusCode, code: oauthError.error) {
+                    throw TossInvestMarketDataError.authenticationRejected(message)
+                }
+                throw TossInvestMarketDataError.apiError(message)
             }
 
             if let envelope = try? decoder.decode(ErrorEnvelope.self, from: data),
                let error = envelope.error {
                 let code = error.code.map { "\($0): " } ?? ""
-                throw TossInvestMarketDataError.apiError("\(code)\(error.message ?? "Request failed.")")
+                let message = "\(code)\(error.message ?? "Request failed.")"
+                if Self.isAuthenticationRejection(statusCode: httpResponse.statusCode, code: error.code) {
+                    throw TossInvestMarketDataError.authenticationRejected(message)
+                }
+                throw TossInvestMarketDataError.apiError(message)
             }
-            throw TossInvestMarketDataError.apiError("Request failed with HTTP \(httpResponse.statusCode).")
+            let message = "Request failed with HTTP \(httpResponse.statusCode)."
+            if Self.isAuthenticationRejection(statusCode: httpResponse.statusCode, code: nil) {
+                throw TossInvestMarketDataError.authenticationRejected(message)
+            }
+            throw TossInvestMarketDataError.apiError(message)
         }
         return data
+    }
+
+    private static func isAuthenticationRejection(statusCode: Int, code: String?) -> Bool {
+        if statusCode == 401 || statusCode == 403 {
+            return true
+        }
+
+        let normalizedCode = code?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return normalizedCode == "invalid-token" || normalizedCode == "invalid_token"
     }
 
     private func apiURL(path: String) -> URL {

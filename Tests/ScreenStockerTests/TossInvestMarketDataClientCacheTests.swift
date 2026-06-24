@@ -8,6 +8,8 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         MockTossInvestURLProtocol.candle1mResponses = []
         MockTossInvestURLProtocol.candle1dResponse = nil
         MockTossInvestURLProtocol.priceTimestamps = []
+        MockTossInvestURLProtocol.issuedTokenValues = ["token"]
+        MockTossInvestURLProtocol.rejectedBearerTokens = []
     }
 
     func testAccessTokenIsReusedAcrossRefreshes() async throws {
@@ -23,6 +25,46 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         _ = try await client.quotes(for: ["005930"])
 
         XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["token"], 1)
+        XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["prices"], 2)
+    }
+
+    func testRejectedCachedTokenIsReissuedAndRequestRetriesOnce() async throws {
+        let defaults = UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID().uuidString)")!
+        let client = TossInvestMarketDataClient(
+            credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
+            session: Self.makeSession(),
+            chartSeriesCacheStore: StockChartSeriesCacheStore(defaults: defaults)
+        )
+        MockTossInvestURLProtocol.issuedTokenValues = ["cached-token", "fresh-token"]
+        MockTossInvestURLProtocol.candle1dResponse = Self.makeDailyCandlePageData()
+
+        _ = try await client.quotes(for: ["005930"])
+        MockTossInvestURLProtocol.rejectedBearerTokens = ["cached-token"]
+        let quotes = try await client.quotes(for: ["005930"])
+
+        XCTAssertEqual(quotes["005930"]?.price, Decimal(string: "70000"))
+        XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["token"], 2)
+        XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["prices"], 3)
+    }
+
+    func testAuthenticationRejectionRetriesOnlyOnce() async throws {
+        let defaults = UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID().uuidString)")!
+        let client = TossInvestMarketDataClient(
+            credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
+            session: Self.makeSession(),
+            chartSeriesCacheStore: StockChartSeriesCacheStore(defaults: defaults)
+        )
+        MockTossInvestURLProtocol.issuedTokenValues = ["expired-token", "rejected-token"]
+        MockTossInvestURLProtocol.rejectedBearerTokens = ["expired-token", "rejected-token"]
+
+        do {
+            _ = try await client.quotes(for: ["005930"])
+            XCTFail("Expected the retried request to fail.")
+        } catch {
+            XCTAssertEqual(error.localizedDescription, "invalid-token: 유효하지 않은 토큰입니다.")
+        }
+
+        XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["token"], 2)
         XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["prices"], 2)
     }
 
@@ -749,6 +791,8 @@ private final class MockTossInvestURLProtocol: URLProtocol {
     static var candle1mResponses: [Data] = []
     static var candle1dResponse: Data?
     static var priceTimestamps: [String] = []
+    static var issuedTokenValues = ["token"]
+    static var rejectedBearerTokens: Set<String> = []
 
     override class func canInit(with request: URLRequest) -> Bool {
         true
@@ -766,6 +810,7 @@ private final class MockTossInvestURLProtocol: URLProtocol {
 
         let path = url.path
         let response: Data?
+        var statusCode = 200
 
         switch path {
         case "/oauth2/token":
@@ -773,10 +818,20 @@ private final class MockTossInvestURLProtocol: URLProtocol {
             response = Self.tokenResponse()
         case "/api/v1/stocks":
             Self.requestCounts["stocks", default: 0] += 1
-            response = Self.stockInfoResponse(for: Self.requestedSymbol(from: url))
+            if Self.shouldRejectBearerToken(in: request) {
+                statusCode = 401
+                response = Self.invalidTokenResponse()
+            } else {
+                response = Self.stockInfoResponse(for: Self.requestedSymbol(from: url))
+            }
         case "/api/v1/prices":
             Self.requestCounts["prices", default: 0] += 1
-            response = Self.priceResponse(for: Self.requestedSymbol(from: url))
+            if Self.shouldRejectBearerToken(in: request) {
+                statusCode = 401
+                response = Self.invalidTokenResponse()
+            } else {
+                response = Self.priceResponse(for: Self.requestedSymbol(from: url))
+            }
         case "/api/v1/candles":
             let interval = URLComponents(url: url, resolvingAgainstBaseURL: false)?
                 .queryItems?
@@ -799,7 +854,7 @@ private final class MockTossInvestURLProtocol: URLProtocol {
 
         let httpResponse = HTTPURLResponse(
             url: url,
-            statusCode: 200,
+            statusCode: statusCode,
             httpVersion: "HTTP/1.1",
             headerFields: ["Content-Type": "application/json"]
         )!
@@ -811,10 +866,31 @@ private final class MockTossInvestURLProtocol: URLProtocol {
     override func stopLoading() {}
 
     private static func tokenResponse() -> Data {
-        try! JSONSerialization.data(
-            withJSONObject: ["access_token": "token", "expires_in": 3_600],
+        let token = issuedTokenValues.isEmpty ? "token" : issuedTokenValues.removeFirst()
+        return try! JSONSerialization.data(
+            withJSONObject: ["access_token": token, "expires_in": 3_600],
             options: []
         )
+    }
+
+    private static func invalidTokenResponse() -> Data {
+        try! JSONSerialization.data(
+            withJSONObject: [
+                "error": [
+                    "code": "invalid-token",
+                    "message": "유효하지 않은 토큰입니다."
+                ]
+            ],
+            options: []
+        )
+    }
+
+    private static func shouldRejectBearerToken(in request: URLRequest) -> Bool {
+        guard let authorization = request.value(forHTTPHeaderField: "Authorization"),
+              authorization.hasPrefix("Bearer ") else {
+            return false
+        }
+        return rejectedBearerTokens.contains(String(authorization.dropFirst("Bearer ".count)))
     }
 
     private static func stockInfoResponse(for symbol: String) -> Data {
