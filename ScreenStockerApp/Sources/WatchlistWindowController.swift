@@ -371,6 +371,7 @@ final class WatchlistViewModel: ObservableObject {
                 let self,
                 self.selectedSymbol == symbol,
                 self.marketSnapshots[symbol] == originalSnapshot,
+                existingSnapshot.series.points.isEmpty,
                 !cachedSeries.points.isEmpty
             else {
                 return

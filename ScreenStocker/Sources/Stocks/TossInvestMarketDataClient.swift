@@ -338,10 +338,11 @@ final class TossInvestMarketDataClient {
         let sessionKind = activeSessionKind(for: venue, referenceDate: currentDate())
         let referenceDate = currentDate()
 
-        if let cachedEntry = cachedActiveIntradayEntry(
-            symbol: normalizedSymbol,
-            venue: venue,
-            sessionKind: sessionKind,
+        let marketTimeZone = Self.marketTimeZone(for: venue)
+        if let cachedEntry = chartSeriesCacheStore.preferredEntry(
+            for: normalizedSymbol,
+            timeZoneIdentifier: marketTimeZone.identifier,
+            sessionIdentifier: sessionKind.cacheIdentifier,
             referenceDate: referenceDate
         ) {
             return makeIntradaySeries(
@@ -349,19 +350,6 @@ final class TossInvestMarketDataClient {
                 venue: venue,
                 sessionKind: sessionKind,
                 candles: cachedEntry.candles
-            )
-        }
-
-        if let latestEntry = latestIntradayEntry(
-            symbol: normalizedSymbol,
-            venue: venue,
-            sessionKind: sessionKind
-        ) {
-            return makeIntradaySeries(
-                symbol: normalizedSymbol,
-                venue: venue,
-                sessionKind: sessionKind,
-                candles: latestEntry.candles
             )
         }
 

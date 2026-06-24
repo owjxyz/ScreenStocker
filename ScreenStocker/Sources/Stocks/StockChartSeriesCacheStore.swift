@@ -73,6 +73,9 @@ final class StockChartSeriesCacheStore {
 
     private let defaults: UserDefaults
     private let mirrorsSharedCache: Bool
+    private let lock = NSRecursiveLock()
+    private var cachedEntries: [String: IntradaySeriesCacheEntry]?
+    private var cachedDailyCloseEntries: [String: [DailyCloseCacheEntry]]?
 
     init(defaults: UserDefaults? = nil) {
         self.defaults = defaults ?? UserDefaults(suiteName: StockChartSeriesCacheStore.suiteName) ?? .standard
@@ -87,6 +90,9 @@ final class StockChartSeriesCacheStore {
         sessionIdentifier: String = StockChartSeriesCacheStore.defaultSessionIdentifier,
         referenceDate: Date = Date()
     ) -> IntradaySeriesCacheEntry? {
+        lock.lock()
+        defer { lock.unlock() }
+
         pruneStaleEntries(referenceDate: referenceDate)
         guard let entries = loadEntries() else {
             return nil
@@ -116,6 +122,9 @@ final class StockChartSeriesCacheStore {
         sessionIdentifier: String = StockChartSeriesCacheStore.defaultSessionIdentifier,
         referenceDate: Date = Date()
     ) -> IntradaySeriesCacheEntry? {
+        lock.lock()
+        defer { lock.unlock() }
+
         guard let timeZone = TimeZone(identifier: timeZoneIdentifier) else {
             return nil
         }
@@ -138,7 +147,10 @@ final class StockChartSeriesCacheStore {
         timeZoneIdentifier: String,
         sessionIdentifier: String = StockChartSeriesCacheStore.defaultSessionIdentifier
     ) -> IntradaySeriesCacheEntry? {
-        loadEntries()?.values
+        lock.lock()
+        defer { lock.unlock() }
+
+        return loadEntries()?.values
             .filter {
                 $0.symbol == symbol
                     && $0.timeZoneIdentifier == timeZoneIdentifier
@@ -151,6 +163,50 @@ final class StockChartSeriesCacheStore {
             }
     }
 
+    func preferredEntry(
+        for symbol: String,
+        timeZoneIdentifier: String,
+        sessionIdentifier: String = StockChartSeriesCacheStore.defaultSessionIdentifier,
+        referenceDate: Date = Date()
+    ) -> IntradaySeriesCacheEntry? {
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard let timeZone = TimeZone(identifier: timeZoneIdentifier) else {
+            return nil
+        }
+
+        pruneStaleEntries(referenceDate: referenceDate)
+        guard let entries = loadEntries() else {
+            return nil
+        }
+
+        let activeDayIdentifier = Self.activeSessionDayIdentifier(
+            for: referenceDate,
+            timeZone: timeZone,
+            sessionIdentifier: sessionIdentifier
+        )
+        let activeKey = Self.cacheKey(
+            symbol: symbol,
+            dayIdentifier: activeDayIdentifier,
+            timeZoneIdentifier: timeZoneIdentifier,
+            sessionIdentifier: sessionIdentifier
+        )
+
+        if let activeEntry = entries[activeKey] {
+            return activeEntry
+        }
+
+        return entries.values
+            .filter {
+                $0.symbol == symbol
+                    && $0.timeZoneIdentifier == timeZoneIdentifier
+                    && $0.sessionIdentifier == sessionIdentifier
+                    && !$0.candles.isEmpty
+            }
+            .max { Self.latestTimestamp(in: $0) < Self.latestTimestamp(in: $1) }
+    }
+
     func save(
         candles: [IntradayCandle],
         isComplete: Bool,
@@ -160,6 +216,9 @@ final class StockChartSeriesCacheStore {
         sessionIdentifier: String = StockChartSeriesCacheStore.defaultSessionIdentifier,
         referenceDate: Date = Date()
     ) {
+        lock.lock()
+        defer { lock.unlock() }
+
         pruneStaleEntries(referenceDate: referenceDate)
         var entries = loadEntries() ?? [:]
         let key = Self.cacheKey(
@@ -180,10 +239,16 @@ final class StockChartSeriesCacheStore {
     }
 
     func dailyCloses(for symbol: String) -> [DailyCloseCacheEntry] {
-        loadDailyCloseEntries()?[symbol] ?? []
+        lock.lock()
+        defer { lock.unlock() }
+
+        return loadDailyCloseEntries()?[symbol] ?? []
     }
 
     func saveDailyCloses(_ closes: [DailyCloseCacheEntry], for symbol: String) {
+        lock.lock()
+        defer { lock.unlock() }
+
         guard !closes.isEmpty else { return }
 
         var entries = loadDailyCloseEntries() ?? [:]
@@ -202,6 +267,9 @@ final class StockChartSeriesCacheStore {
     }
 
     func pruneStaleEntries(referenceDate: Date = Date()) {
+        lock.lock()
+        defer { lock.unlock() }
+
         guard var entries = loadEntries() else { return }
 
         let filteredEntries = entries.filter { _, entry in
@@ -244,12 +312,17 @@ final class StockChartSeriesCacheStore {
     }
 
     private func loadEntries() -> [String: IntradaySeriesCacheEntry]? {
+        if let cachedEntries {
+            return cachedEntries.isEmpty ? nil : cachedEntries
+        }
+
         var mergedEntries: [String: IntradaySeriesCacheEntry] = [:]
 
         for entries in cacheEntrySources() {
             mergedEntries = Self.mergedEntries(mergedEntries, entries)
         }
 
+        cachedEntries = mergedEntries
         return mergedEntries.isEmpty ? nil : mergedEntries
     }
 
@@ -257,6 +330,7 @@ final class StockChartSeriesCacheStore {
         guard let data = try? PropertyListEncoder().encode(entries) else {
             return
         }
+        cachedEntries = entries
         defaults.set(data, forKey: Key.intradaySeriesCache)
         defaults.synchronize()
 
@@ -267,6 +341,10 @@ final class StockChartSeriesCacheStore {
     }
 
     private func loadDailyCloseEntries() -> [String: [DailyCloseCacheEntry]]? {
+        if let cachedDailyCloseEntries {
+            return cachedDailyCloseEntries.isEmpty ? nil : cachedDailyCloseEntries
+        }
+
         var mergedEntries: [String: [DailyCloseCacheEntry]] = [:]
 
         for entries in dailyCloseEntrySources() {
@@ -285,6 +363,7 @@ final class StockChartSeriesCacheStore {
             }
         }
 
+        cachedDailyCloseEntries = mergedEntries
         return mergedEntries.isEmpty ? nil : mergedEntries
     }
 
@@ -292,6 +371,7 @@ final class StockChartSeriesCacheStore {
         guard let data = try? PropertyListEncoder().encode(entries) else {
             return
         }
+        cachedDailyCloseEntries = entries
         defaults.set(data, forKey: Key.dailyCloseCache)
         defaults.synchronize()
 
@@ -403,9 +483,13 @@ final class StockChartSeriesCacheStore {
         _ lhs: IntradaySeriesCacheEntry,
         _ rhs: IntradaySeriesCacheEntry
     ) -> IntradaySeriesCacheEntry {
-        let lhsTimestamp = lhs.candles.map(\.timestamp).max() ?? .distantPast
-        let rhsTimestamp = rhs.candles.map(\.timestamp).max() ?? .distantPast
+        let lhsTimestamp = latestTimestamp(in: lhs)
+        let rhsTimestamp = latestTimestamp(in: rhs)
         return rhsTimestamp >= lhsTimestamp ? rhs : lhs
+    }
+
+    private static func latestTimestamp(in entry: IntradaySeriesCacheEntry) -> Date {
+        entry.candles.map(\.timestamp).max() ?? .distantPast
     }
 
     private static func decodeEntries(from data: Data) -> [String: IntradaySeriesCacheEntry]? {
