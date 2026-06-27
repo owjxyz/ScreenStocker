@@ -46,6 +46,7 @@ The goal of this project is to build a lightweight, maintainable stock-status sc
 - Avoid overlapping requests. If a previous refresh is still running, do not start another request for the same symbol.
 - Cancel refresh work when the screen saver stops animating or is deallocated.
 - Cache the last successful quote and visualization data so the UI can continue showing useful information during transient network failures.
+- For chart and visualization refresh decisions, the important criterion is not whether cached candle data exists, but whether the most recent cached candle timestamp is current enough compared with the current time for the active market session. If the latest cached candle is behind the current session time by the refresh cadence, fetch and merge newer candle data; if the market session has ended, compare against the session end so the app does not repeatedly fetch only because wall-clock time keeps advancing.
 - If credentials are missing or the provider fails, use an explicit fallback state or demo data only where the current product behavior expects it.
 
 ## Watchlist And Selection

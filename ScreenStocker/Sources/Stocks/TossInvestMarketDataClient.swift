@@ -283,6 +283,7 @@ final class TossInvestMarketDataClient {
     private let baseURL = URL(string: "https://openapi.tossinvest.com")!
     private let decoder: JSONDecoder
     private static let maximumIntradayCandleGap: TimeInterval = 5 * 60
+    private static let intradayCacheFreshnessInterval: TimeInterval = 60
     private static let maximumDailyCloseCacheAge: TimeInterval = 14 * 24 * 60 * 60
     private static let defaultAccessTokenLifetime: TimeInterval = 50 * 60
     private static let accessTokenExpiryLeeway: TimeInterval = 60
@@ -339,8 +340,7 @@ final class TossInvestMarketDataClient {
         return await intradaySeriesForSnapshot(
             symbol: quote.symbol,
             venue: venue,
-            sessionKind: sessionKind,
-            latestQuoteTimestamp: quote.timestamp
+            sessionKind: sessionKind
         )
     }
 
@@ -361,12 +361,23 @@ final class TossInvestMarketDataClient {
             sessionIdentifier: sessionKind.cacheIdentifier,
             referenceDate: referenceDate
         ) {
-            return makeIntradaySeries(
+            let series = makeIntradaySeries(
                 symbol: normalizedSymbol,
                 venue: venue,
                 sessionKind: sessionKind,
                 candles: cachedEntry.candles
             )
+            if !series.points.isEmpty {
+                return series
+            }
+        }
+
+        if let series = latestRenderableIntradaySeries(
+            symbol: normalizedSymbol,
+            venue: venue,
+            sessionKind: sessionKind
+        ) {
+            return series
         }
 
         return StockChartSeries(symbol: normalizedSymbol, points: [])
@@ -397,8 +408,7 @@ final class TossInvestMarketDataClient {
     private func intradaySeriesForSnapshot(
         symbol: String,
         venue: TradingVenue,
-        sessionKind: TradingSessionKind,
-        latestQuoteTimestamp: Date?
+        sessionKind: TradingSessionKind
     ) async -> StockChartSeries {
         let referenceDate = currentDate()
         if let cachedEntry = cachedActiveIntradayEntry(
@@ -407,22 +417,37 @@ final class TossInvestMarketDataClient {
             sessionKind: sessionKind,
             referenceDate: referenceDate
         ) {
-            let latestCachedTimestamp = cachedEntry.candles.map(\.timestamp).max()
-            let shouldFetchNewCandles = latestQuoteTimestamp.map { quoteTimestamp in
-                latestCachedTimestamp.map { quoteTimestamp > $0 } ?? true
-            } ?? false
+            let cachedSeries = makeIntradaySeries(
+                symbol: symbol,
+                venue: venue,
+                sessionKind: sessionKind,
+                candles: cachedEntry.candles
+            )
+            let shouldFetchNewCandles = shouldFetchNewCandles(
+                from: cachedEntry,
+                cachedSeries: cachedSeries,
+                symbol: symbol,
+                venue: venue,
+                sessionKind: sessionKind,
+                referenceDate: referenceDate
+            )
 
             if !shouldFetchNewCandles {
-                return makeIntradaySeries(
+                if !cachedSeries.points.isEmpty {
+                    return cachedSeries
+                }
+
+                if let series = latestRenderableIntradaySeries(
                     symbol: symbol,
                     venue: venue,
-                    sessionKind: sessionKind,
-                    candles: cachedEntry.candles
-                )
+                    sessionKind: sessionKind
+                ) {
+                    return series
+                }
             }
 
             if let series = try? await withAccessTokenRetry(operation: { token in
-                try await fetchIntradaySeries(
+                try await fetchIntradaySeriesWithFallback(
                     symbol: symbol,
                     token: token,
                     venue: venue,
@@ -432,16 +457,21 @@ final class TossInvestMarketDataClient {
                 return series
             }
 
-            return makeIntradaySeries(
+            if !cachedSeries.points.isEmpty {
+                return cachedSeries
+            }
+
+            if let series = latestRenderableIntradaySeries(
                 symbol: symbol,
                 venue: venue,
-                sessionKind: sessionKind,
-                candles: cachedEntry.candles
-            )
+                sessionKind: sessionKind
+            ) {
+                return series
+            }
         }
 
         if let series = try? await withAccessTokenRetry(operation: { token in
-            try await fetchIntradaySeries(
+            try await fetchIntradaySeriesWithFallback(
                 symbol: symbol,
                 token: token,
                 venue: venue,
@@ -451,13 +481,8 @@ final class TossInvestMarketDataClient {
             return series
         }
 
-        if let latestEntry = latestIntradayEntry(symbol: symbol, venue: venue, sessionKind: sessionKind) {
-            return makeIntradaySeries(
-                symbol: symbol,
-                venue: venue,
-                sessionKind: sessionKind,
-                candles: latestEntry.candles
-            )
+        if let series = latestRenderableIntradaySeries(symbol: symbol, venue: venue, sessionKind: sessionKind) {
+            return series
         }
 
         return StockChartSeries(symbol: symbol, points: [])
@@ -644,7 +669,7 @@ final class TossInvestMarketDataClient {
 
             chartSeriesCacheStore.save(
                 candles: mergedCandles,
-                isComplete: !hasIncompleteGap,
+                isComplete: !hasIncompleteGap && hasEnoughCandlesForCompleteCache(mergedCandles),
                 for: symbol,
                 dayIdentifier: dayIdentifier,
                 timeZoneIdentifier: marketTimeZone.identifier,
@@ -682,7 +707,7 @@ final class TossInvestMarketDataClient {
 
         chartSeriesCacheStore.save(
             candles: mergedCandles,
-            isComplete: !hasIncompleteGap,
+            isComplete: !hasIncompleteGap && hasEnoughCandlesForCompleteCache(mergedCandles),
             for: symbol,
             dayIdentifier: dayIdentifier,
             timeZoneIdentifier: marketTimeZone.identifier,
@@ -696,6 +721,35 @@ final class TossInvestMarketDataClient {
             sessionKind: sessionKind,
             candles: mergedCandles
         )
+    }
+
+    private func fetchIntradaySeriesWithFallback(
+        symbol: String,
+        token: String,
+        venue: TradingVenue,
+        sessionKind: TradingSessionKind
+    ) async throws -> StockChartSeries {
+        let primarySeries = try await fetchIntradaySeries(
+            symbol: symbol,
+            token: token,
+            venue: venue,
+            sessionKind: sessionKind
+        )
+        guard primarySeries.points.isEmpty,
+              let fallbackSessionKind = fallbackSessionKind(
+                  for: sessionKind,
+                  venue: venue
+              ) else {
+            return primarySeries
+        }
+
+        let fallbackSeries = try await fetchIntradaySeries(
+            symbol: symbol,
+            token: token,
+            venue: venue,
+            sessionKind: fallbackSessionKind
+        )
+        return fallbackSeries.points.isEmpty ? primarySeries : fallbackSeries
     }
 
     private func makeIntradaySeries(
@@ -742,17 +796,54 @@ final class TossInvestMarketDataClient {
         )
     }
 
-    private func latestIntradayEntry(
+    private func latestRenderableIntradaySeries(
         symbol: String,
         venue: TradingVenue,
         sessionKind: TradingSessionKind
-    ) -> IntradaySeriesCacheEntry? {
+    ) -> StockChartSeries? {
         let marketTimeZone = Self.marketTimeZone(for: venue)
-        return chartSeriesCacheStore.latestEntry(
+        return chartSeriesCacheStore.entries(
             for: symbol,
             timeZoneIdentifier: marketTimeZone.identifier,
             sessionIdentifier: sessionKind.cacheIdentifier
         )
+        .lazy
+        .map {
+            self.makeIntradaySeries(
+                symbol: symbol,
+                venue: venue,
+                sessionKind: sessionKind,
+                candles: $0.candles
+            )
+        }
+        .first { !$0.points.isEmpty }
+    }
+
+    private func shouldFetchNewCandles(
+        from cachedEntry: IntradaySeriesCacheEntry,
+        cachedSeries: StockChartSeries,
+        symbol: String,
+        venue: TradingVenue,
+        sessionKind: TradingSessionKind,
+        referenceDate: Date
+    ) -> Bool {
+        guard !cachedSeries.points.isEmpty,
+              let latestCachedTimestamp = cachedEntry.candles.map(\.timestamp).max() else {
+            return true
+        }
+
+        let bounds = tradingSessionBounds(
+            for: symbol,
+            venue: venue,
+            sessionKind: sessionKind,
+            on: referenceDate
+        )
+        guard referenceDate >= bounds.start else {
+            return false
+        }
+
+        let freshnessReferenceDate = min(referenceDate, bounds.end)
+        return freshnessReferenceDate.timeIntervalSince(latestCachedTimestamp) >= Self.intradayCacheFreshnessInterval
     }
 
     private func fetchSessionMinuteCandles(
@@ -1163,6 +1254,20 @@ final class TossInvestMarketDataClient {
         return zip(timestamps, timestamps.dropFirst()).contains { previous, current in
             current.timeIntervalSince(previous) > maximumGap
         }
+    }
+
+    private func hasEnoughCandlesForCompleteCache(_ candles: [IntradayCandle]) -> Bool {
+        candles.count >= 2
+    }
+
+    private func fallbackSessionKind(
+        for sessionKind: TradingSessionKind,
+        venue: TradingVenue
+    ) -> TradingSessionKind? {
+        guard venue == .us, sessionKind == .usDayMarket else {
+            return nil
+        }
+        return .standard
     }
 
     private static func marketTimeZone(for venue: TradingVenue) -> TimeZone {

@@ -301,24 +301,10 @@ final class WatchlistViewModel: ObservableObject {
             guard !Task.isCancelled else { return }
             marketSnapshots = mergedSnapshots(with: quotes)
 
-            if let selectedQuote = marketSnapshots[requestedSymbol]?.quote {
-                let series = await marketDataClient.chartSeries(for: selectedQuote)
-                guard !Task.isCancelled else { return }
-                if !series.points.isEmpty {
-                    let currentQuote = marketSnapshots[requestedSymbol]?.quote ?? selectedQuote
-                    marketSnapshots[requestedSymbol] = StockMarketSnapshot(
-                        quote: StockQuote(
-                            symbol: currentQuote.symbol,
-                            displayName: currentQuote.displayName,
-                            exchangeLabel: series.trackingExchangeLabel ?? currentQuote.exchangeLabel,
-                            price: currentQuote.price,
-                            changePercent: currentQuote.changePercent,
-                            currency: currentQuote.currency,
-                            timestamp: currentQuote.timestamp
-                        ),
-                        series: series
-                    )
-                }
+            if !requestedSymbol.isEmpty {
+                let screenSaverSnapshot = try await marketDataClient.snapshot(for: requestedSymbol)
+                guard !Task.isCancelled, selectedSymbol == requestedSymbol else { return }
+                marketSnapshots[requestedSymbol] = screenSaverSnapshot
             }
 
             marketDataErrorMessage = nil

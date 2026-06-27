@@ -163,6 +163,26 @@ final class StockChartSeriesCacheStore {
             }
     }
 
+    func entries(
+        for symbol: String,
+        timeZoneIdentifier: String,
+        sessionIdentifier: String = StockChartSeriesCacheStore.defaultSessionIdentifier
+    ) -> [IntradaySeriesCacheEntry] {
+        lock.lock()
+        defer { lock.unlock() }
+
+        return loadEntries()?.values
+            .filter {
+                $0.symbol == symbol
+                    && $0.timeZoneIdentifier == timeZoneIdentifier
+                    && $0.sessionIdentifier == sessionIdentifier
+                    && !$0.candles.isEmpty
+            }
+            .sorted {
+                Self.latestTimestamp(in: $0) > Self.latestTimestamp(in: $1)
+            } ?? []
+    }
+
     func preferredEntry(
         for symbol: String,
         timeZoneIdentifier: String,
