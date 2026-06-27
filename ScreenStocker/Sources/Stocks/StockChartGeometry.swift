@@ -36,7 +36,7 @@ enum StockChartGeometry {
 
     static func normalizedCandles(for series: StockChartSeries, in size: CGSize) -> [CandlePoint] {
         let range = priceRange(for: series)
-        let xPositions = normalizedXPositions(for: series, in: size)
+        let xPositions = normalizedCandleXPositions(for: series, in: size)
         guard !series.points.isEmpty,
               let minValue = range.min,
               let maxValue = range.max,
@@ -127,6 +127,21 @@ enum StockChartGeometry {
         }
 
         return series.points.map { normalizedXPosition(for: $0.date, in: series, size: size) }
+    }
+
+    private static func normalizedCandleXPositions(for series: StockChartSeries, in size: CGSize) -> [CGFloat] {
+        guard size.width > 0, !series.points.isEmpty else {
+            return []
+        }
+
+        let candleInterval = estimatedCandleInterval(for: series) / 2
+        return series.points.map { point in
+            normalizedXPosition(
+                for: point.date.addingTimeInterval(-candleInterval),
+                in: series,
+                size: size
+            )
+        }
     }
 
     private static func estimatedCandleInterval(for series: StockChartSeries) -> TimeInterval {

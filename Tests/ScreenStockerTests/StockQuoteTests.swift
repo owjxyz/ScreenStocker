@@ -104,6 +104,50 @@ final class StockQuoteTests: XCTestCase {
         XCTAssertEqual(Double(width), 13.333, accuracy: 0.2)
     }
 
+    func testNormalizedCandlesUseBucketCenterPosition() {
+        let sessionStart = Date(timeIntervalSince1970: 1_700_000_000)
+        let sessionEnd = sessionStart.addingTimeInterval(60 * 60)
+        let series = StockChartSeries(
+            symbol: "TEST",
+            points: [
+                StockTimeSeriesPoint(date: sessionStart.addingTimeInterval(10 * 60), close: 100),
+                StockTimeSeriesPoint(date: sessionStart.addingTimeInterval(20 * 60), close: 102)
+            ],
+            sessionStart: sessionStart,
+            sessionEnd: sessionEnd
+        )
+
+        let candles = StockChartGeometry.normalizedCandles(for: series, in: CGSize(width: 600, height: 300))
+
+        XCTAssertEqual(candles.count, 2)
+        XCTAssertEqual(Double(candles[0].x), 50, accuracy: 0.1)
+        XCTAssertEqual(Double(candles[1].x), 150, accuracy: 0.1)
+    }
+
+    func testCandlesCenterAroundSessionBoundaryWithoutMovingDivider() {
+        let sessionStart = Date(timeIntervalSince1970: 1_700_000_000)
+        let sessionEnd = sessionStart.addingTimeInterval(16 * 60 * 60)
+        let regularOpen = sessionStart.addingTimeInterval(5.5 * 60 * 60)
+        let firstRegularBucketEnd = regularOpen.addingTimeInterval(10 * 60)
+        let series = StockChartSeries(
+            symbol: "AAPL",
+            points: [
+                StockTimeSeriesPoint(date: regularOpen, close: 100),
+                StockTimeSeriesPoint(date: firstRegularBucketEnd, close: 102)
+            ],
+            sessionStart: sessionStart,
+            sessionEnd: sessionEnd,
+            sessionDividers: [regularOpen]
+        )
+
+        let candles = StockChartGeometry.normalizedCandles(for: series, in: CGSize(width: 600, height: 300))
+        let openX = StockChartGeometry.normalizedXPosition(for: regularOpen, in: series, size: CGSize(width: 600, height: 300))
+        let expectedHalfBucketWidth = 600 * (5.0 * 60.0 / (16.0 * 60.0 * 60.0))
+
+        XCTAssertEqual(Double(candles[1].x), Double(openX) + expectedHalfBucketWidth, accuracy: 0.1)
+        XCTAssertEqual(Double(openX), 206.25, accuracy: 0.1)
+    }
+
     func testNormalizedXPositionUsesExtendedTradingHoursForUSSeries() {
         let sessionStart = Date(timeIntervalSince1970: 1_700_000_000)
         let sessionEnd = sessionStart.addingTimeInterval(16 * 60 * 60)
