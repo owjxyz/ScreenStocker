@@ -48,18 +48,8 @@ private final class ChartStyleWindowController: NSWindowController {
 }
 
 private actor CachedChartSeriesLoader {
-    private var marketDataClient: TossInvestMarketDataClient?
-
     func series(for symbol: String, exchangeLabel: String?) -> StockChartSeries {
-        let marketDataClient: TossInvestMarketDataClient
-        if let existingClient = self.marketDataClient {
-            marketDataClient = existingClient
-        } else {
-            let newClient = TossInvestMarketDataClient()
-            self.marketDataClient = newClient
-            marketDataClient = newClient
-        }
-
+        let marketDataClient = TossInvestMarketDataClient()
         return marketDataClient.cachedChartSeries(
             for: symbol,
             exchangeLabel: exchangeLabel
@@ -357,7 +347,6 @@ final class WatchlistViewModel: ObservableObject {
                 let self,
                 self.selectedSymbol == symbol,
                 self.marketSnapshots[symbol] == originalSnapshot,
-                existingSnapshot.series.points.isEmpty,
                 !cachedSeries.points.isEmpty
             else {
                 return
