@@ -1,5 +1,7 @@
 <div align="center">
-  <img src="https://github.com/owjxyz/ScreenStocker/blob/main/Docs/screenstocker-dynamic-glass.svg" width="256">
+  <a href="https://github.com/owjxyz/ScreenStocker/">
+    <img src="https://github.com/owjxyz/ScreenStocker/blob/main/Docs/screenstocker-dynamic-glass.svg" width="256">
+  </a>
   
   # 📈 ScreenStocker
 </div>
