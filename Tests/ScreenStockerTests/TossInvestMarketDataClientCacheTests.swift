@@ -70,15 +70,17 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
 
     func testSeparatedQuoteAndChartRefreshFetchesPricesOnce() async throws {
         let defaults = UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID().uuidString)")!
+        let candleDate = Date(timeIntervalSince1970: 1_719_020_400)
         let client = TossInvestMarketDataClient(
             credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
             session: Self.makeSession(),
-            chartSeriesCacheStore: StockChartSeriesCacheStore(defaults: defaults)
+            chartSeriesCacheStore: StockChartSeriesCacheStore(defaults: defaults),
+            currentDate: { candleDate }
         )
         MockTossInvestURLProtocol.candle1dResponse = Self.makeDailyCandlePageData()
         MockTossInvestURLProtocol.candle1mResponses = [
             Self.makeCandlePageData(
-                candles: Self.candles([Date(timeIntervalSince1970: 1_719_020_400)]),
+                candles: Self.candles([candleDate]),
                 nextBefore: nil
             )
         ]
@@ -434,6 +436,76 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["1m"], 4)
     }
 
+    func testActiveSessionRefreshesCacheWhenDisplayedChartHasGap() async throws {
+        let defaults = UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID().uuidString)")!
+        let cacheStore = StockChartSeriesCacheStore(defaults: defaults)
+        let session = Self.makeSession()
+        let marketTimeZone = TimeZone(identifier: "Asia/Seoul")!
+        let currentDate = Self.date(year: 2026, month: 7, day: 2, hour: 11, timeZone: marketTimeZone)
+        let sessionStart = Self.date(year: 2026, month: 7, day: 2, hour: 9, timeZone: marketTimeZone)
+        let dayIdentifier = StockChartSeriesCacheStore.dayIdentifier(for: sessionStart, timeZone: marketTimeZone)
+
+        cacheStore.save(
+            candles: Self.intradayCandles(
+                [
+                    sessionStart.addingTimeInterval(70 * 60),
+                    sessionStart.addingTimeInterval(80 * 60),
+                    sessionStart.addingTimeInterval(110 * 60),
+                    sessionStart.addingTimeInterval(120 * 60)
+                ],
+                venue: "KRX"
+            ),
+            isComplete: true,
+            for: "005930",
+            dayIdentifier: dayIdentifier,
+            timeZoneIdentifier: marketTimeZone.identifier,
+            referenceDate: currentDate
+        )
+        let client = TossInvestMarketDataClient(
+            credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
+            session: session,
+            chartSeriesCacheStore: cacheStore,
+            currentDate: { currentDate }
+        )
+
+        MockTossInvestURLProtocol.priceTimestamps = [
+            Self.isoFormatter.string(from: currentDate)
+        ]
+        MockTossInvestURLProtocol.candle1mResponses = [
+            Self.makeCandlePageData(
+                candles: Self.candles(
+                    [
+                        sessionStart.addingTimeInterval(70 * 60),
+                        sessionStart.addingTimeInterval(80 * 60),
+                        sessionStart.addingTimeInterval(90 * 60),
+                        sessionStart.addingTimeInterval(100 * 60),
+                        sessionStart.addingTimeInterval(110 * 60),
+                        sessionStart.addingTimeInterval(120 * 60)
+                    ]
+                ),
+                nextBefore: nil
+            )
+        ]
+        MockTossInvestURLProtocol.candle1dResponse = Self.makeDailyCandlePageData()
+
+        let snapshot = try await client.snapshot(for: "005930")
+        let refreshedEntry = cacheStore.entry(
+            for: "005930",
+            dayIdentifier: dayIdentifier,
+            timeZoneIdentifier: marketTimeZone.identifier,
+            referenceDate: currentDate
+        )
+
+        XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["1m"], 1)
+        XCTAssertEqual(refreshedEntry?.candles.count, 6)
+        XCTAssertTrue(snapshot.series.points.contains {
+            $0.date == sessionStart.addingTimeInterval(90 * 60)
+        })
+        XCTAssertTrue(snapshot.series.points.contains {
+            $0.date == sessionStart.addingTimeInterval(100 * 60)
+        })
+    }
+
     func testKRXIntradaySeriesMatchesTossTenMinuteChartBoundaries() async throws {
         let defaults = UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID().uuidString)")!
         let cacheStore = StockChartSeriesCacheStore(defaults: defaults)
@@ -736,6 +808,140 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         XCTAssertEqual(dayMarketEntry?.isComplete, false)
         XCTAssertEqual(standardEntry?.candles.count, 6)
         XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["1m"], 3)
+    }
+
+    func testUSHolidaySnapshotRefreshesPreviousTradingDayCacheWhenDisplayedChartHasGap() async throws {
+        let defaults = UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID().uuidString)")!
+        let cacheStore = StockChartSeriesCacheStore(defaults: defaults)
+        let session = Self.makeSession()
+        let timeZone = TimeZone(identifier: "America/New_York")!
+        let previousSessionStart = Self.date(year: 2026, month: 7, day: 2, hour: 4, timeZone: timeZone)
+        let previousSessionEnd = Self.date(year: 2026, month: 7, day: 2, hour: 20, timeZone: timeZone)
+        let currentHoliday = Self.date(year: 2026, month: 7, day: 3, hour: 10, timeZone: timeZone)
+        let previousDayIdentifier = StockChartSeriesCacheStore.dayIdentifier(for: previousSessionStart, timeZone: timeZone)
+
+        cacheStore.save(
+            candles: Self.intradayCandles(
+                [
+                    previousSessionStart.addingTimeInterval(10 * 60),
+                    previousSessionStart.addingTimeInterval(11 * 60),
+                    previousSessionEnd.addingTimeInterval(-60),
+                    previousSessionEnd
+                ],
+                venue: "NASDAQ"
+            ),
+            isComplete: true,
+            for: "AAPL",
+            dayIdentifier: previousDayIdentifier,
+            timeZoneIdentifier: timeZone.identifier,
+            referenceDate: currentHoliday
+        )
+        let client = TossInvestMarketDataClient(
+            credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
+            session: session,
+            chartSeriesCacheStore: cacheStore,
+            currentDate: { currentHoliday }
+        )
+
+        MockTossInvestURLProtocol.priceTimestamps = [
+            Self.isoFormatter.string(from: currentHoliday)
+        ]
+        MockTossInvestURLProtocol.candle1mResponses = [
+            Self.makeCandlePageData(
+                candles: Self.candles(
+                    [
+                        previousSessionStart.addingTimeInterval(10 * 60),
+                        previousSessionStart.addingTimeInterval(11 * 60),
+                        previousSessionStart.addingTimeInterval(6 * 60 * 60),
+                        previousSessionEnd.addingTimeInterval(-60),
+                        previousSessionEnd
+                    ],
+                    market: "NASDAQ",
+                    exchange: "NASDAQ",
+                    venue: "NASDAQ"
+                ),
+                nextBefore: nil
+            )
+        ]
+        MockTossInvestURLProtocol.candle1dResponse = Self.makeDailyCandlePageData()
+
+        let snapshot = try await client.snapshot(for: "AAPL")
+        let refreshedEntry = cacheStore.entry(
+            for: "AAPL",
+            dayIdentifier: previousDayIdentifier,
+            timeZoneIdentifier: timeZone.identifier,
+            referenceDate: currentHoliday
+        )
+
+        XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["1m"], 1)
+        XCTAssertEqual(refreshedEntry?.candles.count, 5)
+        XCTAssertEqual(snapshot.series.sessionStart, previousSessionStart)
+        XCTAssertTrue(snapshot.series.points.contains {
+            $0.date == previousSessionStart.addingTimeInterval(6 * 60 * 60)
+        })
+    }
+
+    func testUSHolidaySnapshotRefreshesPreviousTradingDayCacheWhenRawCandlesHaveGap() async throws {
+        let defaults = UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID().uuidString)")!
+        let cacheStore = StockChartSeriesCacheStore(defaults: defaults)
+        let session = Self.makeSession()
+        let timeZone = TimeZone(identifier: "America/New_York")!
+        let previousSessionStart = Self.date(year: 2026, month: 7, day: 2, hour: 4, timeZone: timeZone)
+        let currentHoliday = Self.date(year: 2026, month: 7, day: 3, hour: 10, timeZone: timeZone)
+        let previousDayIdentifier = StockChartSeriesCacheStore.dayIdentifier(for: previousSessionStart, timeZone: timeZone)
+
+        cacheStore.save(
+            candles: Self.intradayCandles(
+                [
+                    previousSessionStart.addingTimeInterval(10 * 60),
+                    previousSessionStart.addingTimeInterval(16 * 60)
+                ],
+                venue: "NASDAQ"
+            ),
+            isComplete: true,
+            for: "AAPL",
+            dayIdentifier: previousDayIdentifier,
+            timeZoneIdentifier: timeZone.identifier,
+            referenceDate: currentHoliday
+        )
+        let client = TossInvestMarketDataClient(
+            credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
+            session: session,
+            chartSeriesCacheStore: cacheStore,
+            currentDate: { currentHoliday }
+        )
+
+        MockTossInvestURLProtocol.priceTimestamps = [
+            Self.isoFormatter.string(from: currentHoliday)
+        ]
+        MockTossInvestURLProtocol.candle1mResponses = [
+            Self.makeCandlePageData(
+                candles: Self.candles(
+                    (10...16).map { previousSessionStart.addingTimeInterval(TimeInterval($0 * 60)) },
+                    market: "NASDAQ",
+                    exchange: "NASDAQ",
+                    venue: "NASDAQ"
+                ),
+                nextBefore: nil
+            )
+        ]
+        MockTossInvestURLProtocol.candle1dResponse = Self.makeDailyCandlePageData()
+
+        let snapshot = try await client.snapshot(for: "AAPL")
+        let refreshedEntry = cacheStore.entry(
+            for: "AAPL",
+            dayIdentifier: previousDayIdentifier,
+            timeZoneIdentifier: timeZone.identifier,
+            referenceDate: currentHoliday
+        )
+
+        XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["1m"], 1)
+        XCTAssertEqual(refreshedEntry?.candles.count, 7)
+        XCTAssertEqual(snapshot.series.sessionStart, previousSessionStart)
+        XCTAssertEqual(snapshot.series.points.map(\.date), [
+            previousSessionStart.addingTimeInterval(10 * 60),
+            previousSessionStart.addingTimeInterval(20 * 60)
+        ])
     }
 
     func testUSSnapshotUsesStandardSeriesOutsideDayMarketHours() async throws {
