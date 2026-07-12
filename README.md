@@ -2,15 +2,12 @@
   <a href="https://github.com/owjxyz/ScreenStocker/">
     <img src="https://github.com/owjxyz/ScreenStocker/blob/main/Docs/screenstocker-dynamic-glass.svg" width="256">
   </a>
-  
-  # 📈 ScreenStocker
-</div>
 
 ScreenStocker is a lightweight macOS screen saver that shows the current price status and chart for stocks you care about.
 
 Use the companion app to manage your watchlist and display settings.
 
-[한국어 README 보기](README.ko.md)
+[한국어 README 보기](Docs/README.ko.md)
 
 ## Key Features
 
