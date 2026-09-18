@@ -83,6 +83,44 @@ final class StockChartSeriesCacheStore {
         pruneStaleEntries()
     }
 
+    func marketCalendar(country: String) -> StockMarketCalendarCache? {
+        lock.lock()
+        defer { lock.unlock() }
+        let key = "marketCalendar.\(country)"
+        var sources = [defaults.data(forKey: key)]
+        if mirrorsSharedCache {
+            sources += Self.sharedCacheURLs().map { Self.readPreferenceFile(at: $0)?[key] as? Data }
+        }
+        return sources.compactMap { data in
+            data.flatMap { try? PropertyListDecoder().decode(StockMarketCalendarCache.self, from: $0) }
+        }.max { $0.fetchedAt < $1.fetchedAt }
+    }
+
+    func saveMarketCalendar(
+        _ calendar: StockMarketCalendar,
+        country: String,
+        queryDay: String,
+        fetchedAt: Date
+    ) {
+        lock.lock()
+        defer { lock.unlock() }
+        var days = Dictionary((marketCalendar(country: country)?.days ?? []).map { ($0.date, $0) },
+                              uniquingKeysWith: { _, new in new })
+        for day in calendar.days { days[day.date] = day }
+        let retainedDays = days.values.filter {
+            Self.daysBetween($0.date, and: queryDay).map { $0 <= 14 } ?? false
+        }.sorted { $0.date < $1.date }
+        let cache = StockMarketCalendarCache(queryDay: queryDay, fetchedAt: fetchedAt, days: retainedDays)
+        guard let data = try? PropertyListEncoder().encode(cache) else { return }
+        let key = "marketCalendar.\(country)"
+        defaults.set(data, forKey: key)
+        defaults.synchronize()
+        guard mirrorsSharedCache else { return }
+        for url in Self.sharedCacheURLs() {
+            Self.updatePreferenceFile(at: url) { $0[key] = data }
+        }
+    }
+
     func entry(
         for symbol: String,
         dayIdentifier: String,
@@ -114,32 +152,6 @@ final class StockChartSeriesCacheStore {
                 && $0.timeZoneIdentifier == timeZoneIdentifier
                 && $0.sessionIdentifier == sessionIdentifier
         }
-    }
-
-    func activeSessionEntry(
-        for symbol: String,
-        timeZoneIdentifier: String,
-        sessionIdentifier: String = StockChartSeriesCacheStore.defaultSessionIdentifier,
-        referenceDate: Date = Date()
-    ) -> IntradaySeriesCacheEntry? {
-        lock.lock()
-        defer { lock.unlock() }
-
-        guard let timeZone = TimeZone(identifier: timeZoneIdentifier) else {
-            return nil
-        }
-
-        return entry(
-            for: symbol,
-            dayIdentifier: Self.activeSessionDayIdentifier(
-                for: referenceDate,
-                timeZone: timeZone,
-                sessionIdentifier: sessionIdentifier
-            ),
-            timeZoneIdentifier: timeZoneIdentifier,
-            sessionIdentifier: sessionIdentifier,
-            referenceDate: referenceDate
-        )
     }
 
     func latestEntry(
@@ -192,39 +204,8 @@ final class StockChartSeriesCacheStore {
         lock.lock()
         defer { lock.unlock() }
 
-        guard let timeZone = TimeZone(identifier: timeZoneIdentifier) else {
-            return nil
-        }
-
         pruneStaleEntries(referenceDate: referenceDate)
-        guard let entries = loadEntries() else {
-            return nil
-        }
-
-        let activeDayIdentifier = Self.activeSessionDayIdentifier(
-            for: referenceDate,
-            timeZone: timeZone,
-            sessionIdentifier: sessionIdentifier
-        )
-        let activeKey = Self.cacheKey(
-            symbol: symbol,
-            dayIdentifier: activeDayIdentifier,
-            timeZoneIdentifier: timeZoneIdentifier,
-            sessionIdentifier: sessionIdentifier
-        )
-
-        if let activeEntry = entries[activeKey] {
-            return activeEntry
-        }
-
-        return entries.values
-            .filter {
-                $0.symbol == symbol
-                    && $0.timeZoneIdentifier == timeZoneIdentifier
-                    && $0.sessionIdentifier == sessionIdentifier
-                    && !$0.candles.isEmpty
-            }
-            .max { Self.latestTimestamp(in: $0) < Self.latestTimestamp(in: $1) }
+        return latestEntry(for: symbol, timeZoneIdentifier: timeZoneIdentifier, sessionIdentifier: sessionIdentifier)
     }
 
     func save(
@@ -306,12 +287,8 @@ final class StockChartSeriesCacheStore {
             return false
         }
 
-        let activeDayIdentifier = activeSessionDayIdentifier(
-            for: referenceDate,
-            timeZone: timeZone,
-            sessionIdentifier: entry.sessionIdentifier
-        )
-        return daysBetween(entry.dayIdentifier, and: activeDayIdentifier).map { $0 <= 7 } ?? false
+        let referenceDay = dayIdentifier(for: referenceDate, timeZone: timeZone)
+        return daysBetween(entry.dayIdentifier, and: referenceDay).map { $0 <= 14 } ?? false
     }
 
     private static func daysBetween(_ lhs: String, and rhs: String) -> Int? {
@@ -624,49 +601,4 @@ final class StockChartSeriesCacheStore {
         return String(format: "%04d-%02d-%02d", year, month, day)
     }
 
-    private static func activeSessionDayIdentifier(
-        for date: Date,
-        timeZone: TimeZone,
-        sessionIdentifier: String
-    ) -> String {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = timeZone
-
-        let rolloverTime = cacheRolloverTime(for: timeZone, sessionIdentifier: sessionIdentifier)
-        let rolloverDate = calendar.date(
-            bySettingHour: rolloverTime.hour,
-            minute: rolloverTime.minute,
-            second: 0,
-            of: date
-        ) ?? calendar.startOfDay(for: date)
-
-        var activeSessionDate = date
-        if date < rolloverDate,
-           let previousDay = calendar.date(byAdding: .day, value: -1, to: activeSessionDate) {
-            activeSessionDate = previousDay
-        }
-
-        while calendar.isDateInWeekend(activeSessionDate),
-              let previousDay = calendar.date(byAdding: .day, value: -1, to: activeSessionDate) {
-            activeSessionDate = previousDay
-        }
-
-        return dayIdentifier(for: activeSessionDate, timeZone: timeZone)
-    }
-
-    private static func cacheRolloverTime(
-        for timeZone: TimeZone,
-        sessionIdentifier: String
-    ) -> (hour: Int, minute: Int) {
-        switch (timeZone.identifier, sessionIdentifier) {
-        case ("Asia/Seoul", _):
-            return (8, 0)
-        case ("America/New_York", "usDayMarket"):
-            return (20, 0)
-        case ("America/New_York", _):
-            return (4, 0)
-        default:
-            return (0, 0)
-        }
-    }
 }

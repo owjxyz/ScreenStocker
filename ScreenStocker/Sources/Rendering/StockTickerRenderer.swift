@@ -308,7 +308,7 @@ struct StockTickerScreenView: View {
         let dataDateFormatter = StockSymbolInput.marketKind(for: quote.symbol) == .krx
             ? Self.krxDataDateFormatter
             : Self.usDataDateFormatter
-        return "Data \(dataDateFormatter.string(from: chartDate))\n\(updateText)"
+        return "Data \(series.businessDay ?? dataDateFormatter.string(from: chartDate))\n\(updateText)"
     }
 
     private static let timestampFormatter: DateFormatter = {
