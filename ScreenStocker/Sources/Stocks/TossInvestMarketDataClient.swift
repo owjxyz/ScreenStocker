@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 struct StockMarketSnapshot: Equatable {
     let quote: StockQuote
@@ -282,6 +283,7 @@ final class TossInvestMarketDataClient {
     private let accessTokenCache = TossInvestAccessTokenCache()
     private let baseURL = URL(string: "https://openapi.tossinvest.com")!
     private let decoder: JSONDecoder
+    private static let logger = Logger(subsystem: "com.tasokiii.ScreenStocker", category: "marketData")
     private static let maximumIntradayCandleGap: TimeInterval = 5 * 60
     private static let maximumDisplayedChartGap: TimeInterval = 10 * 60
     private static let intradayCacheFreshnessInterval: TimeInterval = 60
@@ -379,13 +381,12 @@ final class TossInvestMarketDataClient {
             }
         }
 
-        if isMarketClosedDay(venue: venue, date: referenceDate),
-           let series = latestRenderableIntradaySeries(
-               symbol: normalizedSymbol,
-               venue: venue,
-               sessionKind: sessionKind,
-               referenceDate: referenceDate
-           ) {
+        if let series = latestRenderableIntradaySeries(
+            symbol: normalizedSymbol,
+            venue: venue,
+            sessionKind: sessionKind,
+            referenceDate: referenceDate
+        ) {
             return series
         }
 
@@ -479,13 +480,12 @@ final class TossInvestMarketDataClient {
                 return currentCachedSeries
             }
 
-            if isMarketClosedDay(venue: venue, date: referenceDate),
-               let series = latestRenderableIntradaySeries(
-                   symbol: symbol,
-                   venue: venue,
-                   sessionKind: sessionKind,
-                   referenceDate: referenceDate
-               ) {
+            if let series = latestRenderableIntradaySeries(
+                symbol: symbol,
+                venue: venue,
+                sessionKind: sessionKind,
+                referenceDate: referenceDate
+            ) {
                 return series
             }
         }
@@ -510,13 +510,12 @@ final class TossInvestMarketDataClient {
             }
         }
 
-        if isMarketClosedDay(venue: venue, date: referenceDate),
-           let series = latestRenderableIntradaySeries(
-               symbol: symbol,
-               venue: venue,
-               sessionKind: sessionKind,
-               referenceDate: referenceDate
-           ) {
+        if let series = latestRenderableIntradaySeries(
+            symbol: symbol,
+            venue: venue,
+            sessionKind: sessionKind,
+            referenceDate: referenceDate
+        ) {
             return series
         }
 
@@ -660,6 +659,7 @@ final class TossInvestMarketDataClient {
         let firstPageCandles = firstPage.candles
             .filter { $0.timestamp >= fetchBounds.start && $0.timestamp <= fetchBounds.end }
             .map(Self.intradayCandle(from:))
+        Self.logger.debug("Toss intraday filter symbol=\(symbol, privacy: .public) session=\(sessionKind.cacheIdentifier, privacy: .public) latest=\(Self.logDate(latestCandleTimestamp), privacy: .public) bounds=\(Self.logDate(fetchBounds.start), privacy: .public)...\(Self.logDate(fetchBounds.end), privacy: .public) firstPage=\(firstPage.candles.count, privacy: .public) firstPageInBounds=\(firstPageCandles.count, privacy: .public)")
         let cachedEntry = chartSeriesCacheStore.entry(
             for: symbol,
             dayIdentifier: dayIdentifier,
@@ -689,6 +689,7 @@ final class TossInvestMarketDataClient {
                 let rawCandles = backfilledCandles
                     .filter { $0.timestamp >= fetchBounds.start && $0.timestamp <= fetchBounds.end }
                     .map(Self.intradayCandle(from:))
+                Self.logger.debug("Toss intraday backfill symbol=\(symbol, privacy: .public) fetched=\(backfilledCandles.count, privacy: .public) inBounds=\(rawCandles.count, privacy: .public) cached=\(cachedEntry.candles.count, privacy: .public)")
                 mergedCandles = Self.mergedCandles(cachedEntry.candles, rawCandles)
             } else {
                 mergedCandles = initialMergedCandles
@@ -728,6 +729,7 @@ final class TossInvestMarketDataClient {
         let rawCandles = candles
             .filter { $0.timestamp >= fetchBounds.start && $0.timestamp <= fetchBounds.end }
             .map(Self.intradayCandle(from:))
+        Self.logger.debug("Toss intraday fetch symbol=\(symbol, privacy: .public) fetched=\(candles.count, privacy: .public) inBounds=\(rawCandles.count, privacy: .public) cached=\(cachedEntry?.candles.count ?? 0, privacy: .public)")
         guard !rawCandles.isEmpty || cachedEntry != nil else {
             return StockChartSeries(symbol: symbol, points: [])
         }
@@ -855,6 +857,15 @@ final class TossInvestMarketDataClient {
         )
         let points = series.points.filter {
             $0.date >= bounds.start && $0.date <= bounds.end
+        }
+
+        // Before the first real candle of the new session, keep the latest
+        // completed session visible. Once a candle from this session exists,
+        // the filtered current-session series takes over.
+        if points.isEmpty,
+           let latestPointDate = series.points.map(\.date).max(),
+           latestPointDate < bounds.start {
+            return renderableSeriesOrEmpty(series, venue: venue)
         }
 
         if isMarketClosedDay(venue: venue, date: referenceDate) {
@@ -1169,7 +1180,12 @@ final class TossInvestMarketDataClient {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
         let data = try await validatedData(for: request)
-        return try decoder.decode(CandleEnvelope.self, from: data).result
+        let page = try decoder.decode(CandleEnvelope.self, from: data).result
+        if interval == "1m" {
+            let timestamps = page.candles.map(\.timestamp)
+            Self.logger.debug("Toss candle page symbol=\(symbol, privacy: .public) before=\(Self.logDate(before), privacy: .public) count=\(page.candles.count, privacy: .public) first=\(Self.logDate(timestamps.min()), privacy: .public) last=\(Self.logDate(timestamps.max()), privacy: .public) nextBefore=\(Self.logDate(page.nextBefore), privacy: .public)")
+        }
+        return page
     }
 
     private func previousDailyCloses(for prices: [PriceResponse], token: String) async -> [String: Decimal] {
@@ -1406,7 +1422,7 @@ final class TossInvestMarketDataClient {
     ) -> [StockTimeSeriesPoint] {
         guard !candles.isEmpty else { return [] }
 
-        let groupedCandles = Dictionary(grouping: candles.filter { $0.timestamp > sessionStart }) { candle in
+        let groupedCandles = Dictionary(grouping: candles.filter { $0.timestamp >= sessionStart }) { candle in
             Int(ceil(candle.timestamp.timeIntervalSince(sessionStart) / 600))
         }
 
@@ -1643,6 +1659,11 @@ final class TossInvestMarketDataClient {
         formatter.formatOptions = [.withInternetDateTime]
         return formatter
     }()
+
+    private static func logDate(_ date: Date?) -> String {
+        guard let date else { return "nil" }
+        return queryDateFormatter.string(from: date)
+    }
 
     private func validatedData(for request: URLRequest) async throws -> Data {
         let (data, response) = try await session.data(for: request)

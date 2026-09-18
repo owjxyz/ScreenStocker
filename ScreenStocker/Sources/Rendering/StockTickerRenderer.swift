@@ -295,10 +295,20 @@ struct StockTickerScreenView: View {
     }
 
     private var updatedText: String {
-        guard let timestamp = quote.timestamp else {
-            return "Waiting for market data"
+        let updateText: String
+        if let timestamp = quote.timestamp {
+            updateText = "Updated \(Self.timestampFormatter.string(from: timestamp))"
+        } else {
+            updateText = "Waiting for market data"
         }
-        return "Updated \(Self.timestampFormatter.string(from: timestamp))"
+
+        guard let chartDate = series.points.map(\.date).max() else {
+            return updateText
+        }
+        let dataDateFormatter = StockSymbolInput.marketKind(for: quote.symbol) == .krx
+            ? Self.krxDataDateFormatter
+            : Self.usDataDateFormatter
+        return "Data \(dataDateFormatter.string(from: chartDate))\n\(updateText)"
     }
 
     private static let timestampFormatter: DateFormatter = {
@@ -306,6 +316,22 @@ struct StockTickerScreenView: View {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = TimeZone(identifier: "Asia/Seoul")
         formatter.dateFormat = "HH:mm 'KST'"
+        return formatter
+    }()
+
+    private static let krxDataDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "Asia/Seoul")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
+    private static let usDataDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "America/New_York")
+        formatter.dateFormat = "yyyy-MM-dd"
         return formatter
     }()
 }

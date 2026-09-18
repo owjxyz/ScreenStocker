@@ -132,6 +132,39 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         XCTAssertNil(MockTossInvestURLProtocol.requestCounts["1m"])
     }
 
+    func testCachedChartSeriesKeepsPreviousSessionVisibleUntilNewSessionHasCandles() throws {
+        let defaults = UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID().uuidString)")!
+        let cacheStore = StockChartSeriesCacheStore(defaults: defaults)
+        let timeZone = TimeZone(identifier: "Asia/Seoul")!
+        let previousSessionEnd = Self.date(year: 2026, month: 6, day: 24, hour: 20, timeZone: timeZone)
+        let beforeNewSession = Self.date(year: 2026, month: 6, day: 25, hour: 8, minute: 30, timeZone: timeZone)
+        let previousDayIdentifier = StockChartSeriesCacheStore.dayIdentifier(
+            for: previousSessionEnd,
+            timeZone: timeZone
+        )
+        cacheStore.save(
+            candles: Self.intradayCandles([previousSessionEnd], venue: "KRX"),
+            isComplete: true,
+            for: "005930",
+            dayIdentifier: previousDayIdentifier,
+            timeZoneIdentifier: timeZone.identifier,
+            referenceDate: beforeNewSession
+        )
+
+        let client = TossInvestMarketDataClient(
+            credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
+            session: Self.makeSession(),
+            chartSeriesCacheStore: cacheStore,
+            currentDate: { beforeNewSession }
+        )
+
+        let series = client.cachedChartSeries(for: "005930", exchangeLabel: "KRX")
+
+        XCTAssertFalse(series.points.isEmpty)
+        XCTAssertEqual(series.points[0].date, previousSessionEnd)
+        XCTAssertNil(MockTossInvestURLProtocol.requestCounts["1m"])
+    }
+
     func testChartSeriesUsesCacheWhenLatestCandleMatchesCurrentTime() async throws {
         let defaults = UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID().uuidString)")!
         let cacheStore = StockChartSeriesCacheStore(defaults: defaults)
@@ -535,10 +568,10 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         let snapshot = try await client.snapshot(for: "005930")
         let pointTimes = snapshot.series.points.map(\.date)
 
-        XCTAssertEqual(pointTimes.count, 72)
-        XCTAssertEqual(pointTimes.first, sessionStart.addingTimeInterval(10 * 60))
+        XCTAssertEqual(pointTimes.count, 73)
+        XCTAssertEqual(pointTimes.first, sessionStart)
         XCTAssertEqual(pointTimes.last, sessionStart.addingTimeInterval(12 * 60 * 60))
-        XCTAssertFalse(pointTimes.contains(sessionStart))
+        XCTAssertTrue(pointTimes.contains(sessionStart))
     }
 
     func testUSSnapshotReturnsQuoteWhenIntradayCandlesAreUnavailable() async throws {
@@ -601,7 +634,7 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         XCTAssertEqual(snapshot.series.sessionStart, sessionStart)
         XCTAssertEqual(snapshot.series.sessionEnd, sessionStart.addingTimeInterval(8 * 60 * 60))
         XCTAssertTrue(snapshot.series.sessionDividers.isEmpty)
-        XCTAssertEqual(snapshot.series.points.first?.date, sessionStart.addingTimeInterval(10 * 60))
+        XCTAssertEqual(snapshot.series.points.first?.date, sessionStart)
         XCTAssertEqual(snapshot.quote.exchangeLabel, "BLUE_OCEAN")
     }
 
