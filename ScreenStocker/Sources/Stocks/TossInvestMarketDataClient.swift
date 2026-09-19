@@ -10,6 +10,10 @@ protocol TossInvestCredentialsProviding {
     var credentials: TossInvestCredentials? { get }
 }
 
+protocol TossInvestAccessTokenStoreProviding {
+    var accessTokenStore: any TossInvestAccessTokenStoring { get }
+}
+
 private actor TossInvestAccessTokenCache {
     private struct CachedToken {
         let credentials: TossInvestCredentials
@@ -291,13 +295,15 @@ final class TossInvestMarketDataClient {
         credentialsStore: any TossInvestCredentialsProviding = TossInvestCredentialsStore(),
         session: URLSession = .shared,
         chartSeriesCacheStore: StockChartSeriesCacheStore = StockChartSeriesCacheStore(),
-        accessTokenStore: any TossInvestAccessTokenStoring = TossInvestAccessTokenStore(),
+        accessTokenStore: (any TossInvestAccessTokenStoring)? = nil,
         currentDate: @escaping () -> Date = Date.init
     ) {
         self.credentialsStore = credentialsStore
         self.session = session
         self.chartSeriesCacheStore = chartSeriesCacheStore
         self.accessTokenStore = accessTokenStore
+            ?? (credentialsStore as? any TossInvestAccessTokenStoreProviding)?.accessTokenStore
+            ?? TossInvestAccessTokenStore()
         self.currentDate = currentDate
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
