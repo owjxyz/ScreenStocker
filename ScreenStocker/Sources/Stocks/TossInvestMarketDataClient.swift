@@ -1271,9 +1271,16 @@ final class TossInvestMarketDataClient {
     }
 
     private func validatedData(for request: URLRequest) async throws -> Data {
-        let (data, response) = try await session.data(for: request)
+        for attempt in 0...1 {
+            let (data, response) = try await session.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw TossInvestMarketDataError.invalidResponse
+        }
+
+        if httpResponse.statusCode == 429, attempt == 0 {
+            let seconds = Double(httpResponse.value(forHTTPHeaderField: "Retry-After") ?? "0") ?? 0
+            if seconds > 0 { try await Task.sleep(for: .seconds(seconds)) }
+            continue
         }
 
         guard (200..<300).contains(httpResponse.statusCode) else {
@@ -1296,24 +1303,23 @@ final class TossInvestMarketDataClient {
                 }
                 throw TossInvestMarketDataError.apiError(message)
             }
-            let message = "Request failed with HTTP \(httpResponse.statusCode)."
+            let requestID = httpResponse.value(forHTTPHeaderField: "X-Request-Id").map { " Request ID: \($0)" } ?? ""
+            let message = "Request failed with HTTP \(httpResponse.statusCode).\(requestID)"
             if Self.isAuthenticationRejection(statusCode: httpResponse.statusCode, code: nil) {
                 throw TossInvestMarketDataError.authenticationRejected(message)
             }
             throw TossInvestMarketDataError.apiError(message)
         }
         return data
+        }
+        throw TossInvestMarketDataError.invalidResponse
     }
 
     private static func isAuthenticationRejection(statusCode: Int, code: String?) -> Bool {
-        if statusCode == 401 || statusCode == 403 {
-            return true
-        }
-
         let normalizedCode = code?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        return normalizedCode == "invalid-token" || normalizedCode == "invalid_token"
+        return statusCode == 401 && ["invalid-token", "invalid_token", "expired-token", "token-revoked"].contains(normalizedCode)
     }
 
     private func apiURL(path: String) -> URL {

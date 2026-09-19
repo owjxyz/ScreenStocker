@@ -12,6 +12,7 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         MockTossInvestURLProtocol.rejectedBearerTokens = []
         MockTossInvestURLProtocol.calendarFails = false
         MockTossInvestURLProtocol.calendarQueries = []
+        MockTossInvestURLProtocol.priceStatusCodes = []
     }
 
     func testAccessTokenIsReusedAcrossRefreshes() async throws {
@@ -90,6 +91,21 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         }
 
         XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["token"], 2)
+        XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["prices"], 2)
+    }
+
+    func testForbiddenResponseDoesNotIssueAnotherToken() async throws {
+        let client = TossInvestMarketDataClient(credentialsStore: StubCredentialsStore(credentials: .init(apiKey: "forbidden", secretKey: "secret")), session: Self.makeSession())
+        MockTossInvestURLProtocol.priceStatusCodes = [403]
+        do { _ = try await client.quotes(for: ["005930"]); XCTFail("Expected forbidden response.") } catch {}
+        XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["token"], 1)
+        XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["prices"], 1)
+    }
+
+    func testRateLimitedRequestRetriesOnce() async throws {
+        let client = TossInvestMarketDataClient(credentialsStore: StubCredentialsStore(credentials: .init(apiKey: "limited", secretKey: "secret")), session: Self.makeSession())
+        MockTossInvestURLProtocol.priceStatusCodes = [429, 200]
+        _ = try await client.quotes(for: ["005930"])
         XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["prices"], 2)
     }
 
@@ -1456,6 +1472,7 @@ private final class MockTossInvestURLProtocol: URLProtocol {
     static var rejectedBearerTokens: Set<String> = []
     static var calendarFails = false
     static var calendarQueries: [String] = []
+    static var priceStatusCodes: [Int] = []
 
     override class func canInit(with request: URLRequest) -> Bool {
         true
@@ -1489,7 +1506,10 @@ private final class MockTossInvestURLProtocol: URLProtocol {
             }
         case "/api/v1/prices":
             Self.requestCounts["prices", default: 0] += 1
-            if Self.shouldRejectBearerToken(in: request) {
+            if !Self.priceStatusCodes.isEmpty {
+                statusCode = Self.priceStatusCodes.removeFirst()
+                response = statusCode == 200 ? Self.priceResponse(for: Self.requestedSymbol(from: url)) : Self.invalidTokenResponse()
+            } else if Self.shouldRejectBearerToken(in: request) {
                 statusCode = 401
                 response = Self.invalidTokenResponse()
             } else {
