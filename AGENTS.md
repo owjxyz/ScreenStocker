@@ -51,6 +51,43 @@ The goal of this project is to build a lightweight, maintainable stock-status sc
 - Secrets: Keychain via Security.framework
 - Formatting: Foundation `NumberFormatter`, `DateFormatter`, and `FormatStyle`
 
+## Toss Invest OpenAPI Documentation Review
+
+Apply this workflow whenever adding or changing Toss Invest OpenAPI-related guidance in `AGENTS.md`, or implementing behavior that depends on that API. Review only the affected API contract and call paths. For unrelated changes, this workflow is not applicable.
+
+### Required Review Workflow
+
+1. **Identify the scope.** List the API-related claims being added or changed and the affected code paths. Separate official API requirements, observed implementation behavior, and project policy. In particular, the 1-minute refresh cadence and cache strategy are project decisions, not API guarantees.
+2. **Find current official sources.** Start at the [documentation website](https://developers.tossinvest.com/docs) and its [agent index](https://developers.tossinvest.com/llms.txt). Use the reference map below to reach the relevant API page, then follow its request/response model links and check the corresponding canonical OpenAPI schema. Consult the overview and FAQ for operational context; use AsyncAPI for WebSocket contracts. Reopen the relevant sources on each review because `latest` URLs can change. If a reader rejects `text/markdown`, retrieve the same official URL with an HTTP client such as `curl`.
+3. **Verify the affected details.** Check applicable authentication and token expiry rules, paths and HTTP methods, parameters, response fields and units, timestamps and time zones, market sessions, pagination, rate limits, and errors. Use the canonical schema for the API contract; record disagreements with other official pages instead of silently combining incompatible details. Do not infer undocumented guarantees from examples or existing code.
+4. **Compare and update consistently.** Trace the affected provider/cache code and its callers, including both the management-app preview and screen saver where relevant. Correct the guidance and any implementation changes within the task's scope. Update existing related sections rather than appending contradictory rules. Report implementation discrepancies outside the task's scope explicitly. Follow the Testing And Verification section for code changes.
+5. **Review the final diff and record evidence.** Confirm that each changed API claim has supporting official documentation, that project policy remains clearly identified, and that related guidance agrees. Record the review date, affected claims, exact source URLs/sections, verification result, and any remaining discrepancy in the task's final briefing or alongside the relevant guidance. Distinguish source accessibility checks from API-contract verification and implementation tests. If a source is inaccessible or does not establish a detail, label the claim unverified and identify the remaining check; do not present it as a verified requirement. Complete independent work without treating unresolved claims as established facts.
+
+Use this compact evidence format: `Review date | Affected claim/behavior | Official URL and section | Result (verified / discrepancy / unverified) | Remaining action`. A documentation-only workflow or link-map edit should say that no API behavior was revalidated; an unrelated change needs no API audit.
+
+### Official Documentation Reference Map
+
+Reference discovery and accessibility checked on **2026-09-19**: the documentation landing page links to `llms.txt`, which identifies the official Markdown references and canonical schemas below. The Markdown index and all eight linked overview, FAQ, schema, and API-group documents were successfully retrieved. This verifies the reference map, not the correctness of the current implementation against every API rule.
+
+| Reference | When to consult it |
+| --- | --- |
+| [Documentation website](https://developers.tossinvest.com/docs) | Human-readable entry point. Its API reference requires JavaScript. |
+| [Official agent index (`llms.txt`)](https://developers.tossinvest.com/llms.txt) | Rediscover current official source URLs; use when the website only returns a JavaScript loading shell. |
+| [Overview](https://openapi.tossinvest.com/openapi-docs/overview.md) | Integration guidance, authentication, API groups, limits, errors, and WebSocket guidance. |
+| [API and model index](https://openapi.tossinvest.com/openapi-docs/latest/api-reference/README.md) | Find endpoint-specific pages and linked response/model definitions, including APIs outside this project's current scope. |
+| [OpenAPI JSON](https://openapi.tossinvest.com/openapi-docs/latest/openapi.json) | Canonical REST contract for exact paths, parameters, schemas, authentication, examples, errors, and limits. |
+| [FAQ](https://openapi.tossinvest.com/openapi-docs/faq.md) | Operational clarifications about authentication, quotes/candles, market hours, and data use. |
+| [AsyncAPI JSON](https://openapi.tossinvest.com/openapi-docs/latest/asyncapi.json) | Canonical WebSocket contract if realtime functionality is considered; this link does not change the project's 1-minute REST refresh policy. |
+
+Project-relevant endpoint references (follow their return-type links into `Models` for field definitions):
+
+| Area | Direct official references | Review focus |
+| --- | --- | --- |
+| Authentication | [AuthApi / token issuance](https://openapi.tossinvest.com/openapi-docs/latest/api-reference/Apis/AuthApi.md#issueOAuth2Token) | Credentials, token response, expiry, and authentication failures. |
+| Quotes and candles | [MarketDataApi / prices](https://openapi.tossinvest.com/openapi-docs/latest/api-reference/Apis/MarketDataApi.md#getPrices), [candles](https://openapi.tossinvest.com/openapi-docs/latest/api-reference/Apis/MarketDataApi.md#getCandles) | Symbol/market parameters, price fields, candle intervals, timestamps, pagination, and response mapping. |
+| Stock information | [StockInfoApi / stock lookup](https://openapi.tossinvest.com/openapi-docs/latest/api-reference/Apis/StockInfoApi.md#getStocks), [stock list](https://openapi.tossinvest.com/openapi-docs/latest/api-reference/Apis/StockInfoApi.md#listStocks) | Identifiers, market classification, and stock metadata. |
+| Market sessions and currency | [MarketInfoApi / KR calendar](https://openapi.tossinvest.com/openapi-docs/latest/api-reference/Apis/MarketInfoApi.md#getKrMarketCalendar), [US calendar](https://openapi.tossinvest.com/openapi-docs/latest/api-reference/Apis/MarketInfoApi.md#getUsMarketCalendar), [exchange rate](https://openapi.tossinvest.com/openapi-docs/latest/api-reference/Apis/MarketInfoApi.md#getExchangeRate) | Trading dates, session boundaries, time zones, and currency data relevant to cache freshness and display. |
+
 ## Data Refresh Rules
 
 - The stock quote and market visualization data refresh interval is 1 minute.
