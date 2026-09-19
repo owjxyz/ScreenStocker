@@ -12,11 +12,14 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         MockTossInvestURLProtocol.rejectedBearerTokens = []
         MockTossInvestURLProtocol.calendarFails = false
         MockTossInvestURLProtocol.calendarQueries = []
+        MockTossInvestURLProtocol.priceStatusCodes = []
+        MockTossInvestURLProtocol.responseHeaders = [:]
+        MockTossInvestURLProtocol.requestedSymbolBatchCounts = []
     }
 
     func testAccessTokenIsReusedAcrossRefreshes() async throws {
         let defaults = UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID().uuidString)")!
-        let client = TossInvestMarketDataClient(
+        let client = Self.makeClient(
             credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
             session: Self.makeSession(),
             chartSeriesCacheStore: StockChartSeriesCacheStore(defaults: defaults)
@@ -30,9 +33,32 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["prices"], 2)
     }
 
+    func testSeparateClientsReuseSharedAccessToken() async throws {
+        let credentials = TossInvestCredentials(apiKey: "key", secretKey: "secret")
+        let tokenStore = StubAccessTokenStore()
+        let firstClient = Self.makeClient(
+            credentialsStore: StubCredentialsStore(credentials: credentials),
+            session: Self.makeSession(),
+            chartSeriesCacheStore: StockChartSeriesCacheStore(defaults: UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID().uuidString)")!),
+            accessTokenStore: tokenStore
+        )
+        let secondClient = Self.makeClient(
+            credentialsStore: StubCredentialsStore(credentials: credentials),
+            session: Self.makeSession(),
+            chartSeriesCacheStore: StockChartSeriesCacheStore(defaults: UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID().uuidString)")!),
+            accessTokenStore: tokenStore
+        )
+        MockTossInvestURLProtocol.candle1dResponse = Self.makeDailyCandlePageData()
+
+        _ = try await firstClient.quotes(for: ["005930"])
+        _ = try await secondClient.quotes(for: ["005930"])
+
+        XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["token"], 1)
+    }
+
     func testRejectedCachedTokenIsReissuedAndRequestRetriesOnce() async throws {
         let defaults = UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID().uuidString)")!
-        let client = TossInvestMarketDataClient(
+        let client = Self.makeClient(
             credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
             session: Self.makeSession(),
             chartSeriesCacheStore: StockChartSeriesCacheStore(defaults: defaults)
@@ -51,7 +77,7 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
 
     func testAuthenticationRejectionRetriesOnlyOnce() async throws {
         let defaults = UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID().uuidString)")!
-        let client = TossInvestMarketDataClient(
+        let client = Self.makeClient(
             credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
             session: Self.makeSession(),
             chartSeriesCacheStore: StockChartSeriesCacheStore(defaults: defaults)
@@ -70,10 +96,48 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["prices"], 2)
     }
 
+    func testForbiddenResponseDoesNotIssueAnotherToken() async throws {
+        let client = Self.makeClient(credentialsStore: StubCredentialsStore(credentials: .init(apiKey: "forbidden", secretKey: "secret")), session: Self.makeSession())
+        MockTossInvestURLProtocol.priceStatusCodes = [403]
+        do { _ = try await client.quotes(for: ["005930"]); XCTFail("Expected forbidden response.") } catch {}
+        XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["token"], 1)
+        XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["prices"], 1)
+    }
+
+    func testAPIErrorIncludesRequestID() async throws {
+        let client = Self.makeClient(credentialsStore: StubCredentialsStore(credentials: .init(apiKey: "request-id", secretKey: "secret")), session: Self.makeSession())
+        MockTossInvestURLProtocol.priceStatusCodes = [403]
+        MockTossInvestURLProtocol.responseHeaders = ["X-Request-Id": "req-123"]
+        do { _ = try await client.quotes(for: ["005930"]); XCTFail("Expected forbidden response.") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("Request ID: req-123")) }
+    }
+
+    func testRateLimitedRequestRetriesOnce() async throws {
+        let client = Self.makeClient(credentialsStore: StubCredentialsStore(credentials: .init(apiKey: "limited", secretKey: "secret")), session: Self.makeSession())
+        MockTossInvestURLProtocol.priceStatusCodes = [429, 200]
+        _ = try await client.quotes(for: ["005930"])
+        XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["prices"], 2)
+    }
+
+    func testQuotesSplit201SymbolsIntoTwoRequestsAndDeduplicate() async throws {
+        let symbols = (1...201).map { String(format: "%06d", $0) } + ["000001", "000201"]
+        let client = Self.makeClient(credentialsStore: StubCredentialsStore(credentials: .init(apiKey: "batch", secretKey: "secret")), session: Self.makeSession())
+        _ = try await client.quotes(for: symbols)
+        XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["prices"], 2)
+        XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["stocks"], 2)
+        XCTAssertEqual(MockTossInvestURLProtocol.requestedSymbolBatchCounts, [200, 200, 1, 1])
+    }
+
+    func testSnapshotForQuoteDoesNotRequestPrices() async throws {
+        let client = Self.makeClient(credentialsStore: StubCredentialsStore(credentials: .init(apiKey: "snapshot", secretKey: "secret")), session: Self.makeSession())
+        _ = await client.snapshot(for: StockQuote(symbol: "005930", displayName: nil, exchangeLabel: "KRX", price: 70_000, changePercent: 0, currency: "KRW", timestamp: Date()))
+        XCTAssertNil(MockTossInvestURLProtocol.requestCounts["prices"])
+    }
+
     func testSeparatedQuoteAndChartRefreshFetchesPricesOnce() async throws {
         let defaults = UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID().uuidString)")!
         let candleDate = Self.date(year: 2026, month: 6, day: 24, hour: 10, timeZone: TimeZone(identifier: "Asia/Seoul")!)
-        let client = TossInvestMarketDataClient(
+        let client = Self.makeClient(
             credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
             session: Self.makeSession(),
             chartSeriesCacheStore: StockChartSeriesCacheStore(defaults: defaults),
@@ -121,7 +185,7 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
             timeZoneIdentifier: timeZone.identifier,
             referenceDate: currentDate
         )
-        let client = TossInvestMarketDataClient(
+        let client = Self.makeClient(
             credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
             session: Self.makeSession(),
             chartSeriesCacheStore: cacheStore,
@@ -153,7 +217,7 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
             referenceDate: beforeNewSession
         )
 
-        let client = TossInvestMarketDataClient(
+        let client = Self.makeClient(
             credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
             session: Self.makeSession(),
             chartSeriesCacheStore: cacheStore,
@@ -192,7 +256,7 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
             timeZoneIdentifier: timeZone.identifier,
             referenceDate: currentDate
         )
-        let client = TossInvestMarketDataClient(
+        let client = Self.makeClient(
             credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
             session: Self.makeSession(),
             chartSeriesCacheStore: cacheStore,
@@ -235,7 +299,7 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
             timeZoneIdentifier: timeZone.identifier,
             referenceDate: newestCandleTimestamp
         )
-        let client = TossInvestMarketDataClient(
+        let client = Self.makeClient(
             credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
             session: session,
             chartSeriesCacheStore: cacheStore,
@@ -289,7 +353,7 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
             timeZoneIdentifier: timeZone.identifier,
             referenceDate: afterClose
         )
-        let client = TossInvestMarketDataClient(
+        let client = Self.makeClient(
             credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
             session: Self.makeSession(),
             chartSeriesCacheStore: cacheStore,
@@ -320,7 +384,7 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         let priceTimestamp = Self.date(year: 2026, month: 6, day: 24, hour: 10, timeZone: timeZone)
         let currentDay = Self.date(year: 2026, month: 6, day: 24, hour: 0, timeZone: timeZone)
         let previousDay = Self.date(year: 2026, month: 6, day: 23, hour: 0, timeZone: timeZone)
-        let client = TossInvestMarketDataClient(
+        let client = Self.makeClient(
             credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
             session: session,
             chartSeriesCacheStore: cacheStore
@@ -356,7 +420,7 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         let today = Self.date(year: 2026, month: 6, day: 24, hour: 0, timeZone: marketTimeZone)
         let currentDate = calendar.date(byAdding: .hour, value: 10, to: today)!
             .addingTimeInterval(20 * 60)
-        let client = TossInvestMarketDataClient(
+        let client = Self.makeClient(
             credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
             session: session,
             chartSeriesCacheStore: cacheStore,
@@ -432,7 +496,7 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         let ten = calendar.date(byAdding: .hour, value: 10, to: today)!
         let tenTwenty = ten.addingTimeInterval(20 * 60)
         let tenThirty = ten.addingTimeInterval(30 * 60)
-        let client = TossInvestMarketDataClient(
+        let client = Self.makeClient(
             credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
             session: session,
             chartSeriesCacheStore: cacheStore,
@@ -497,7 +561,7 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
             timeZoneIdentifier: marketTimeZone.identifier,
             referenceDate: currentDate
         )
-        let client = TossInvestMarketDataClient(
+        let client = Self.makeClient(
             credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
             session: session,
             chartSeriesCacheStore: cacheStore,
@@ -551,7 +615,7 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         calendar.timeZone = marketTimeZone
         let today = Self.date(year: 2026, month: 7, day: 2, hour: 0, timeZone: marketTimeZone)
         let sessionStart = calendar.date(byAdding: .hour, value: 8, to: today)!
-        let client = TossInvestMarketDataClient(
+        let client = Self.makeClient(
             credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
             session: session,
             chartSeriesCacheStore: cacheStore,
@@ -582,7 +646,7 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         let defaults = UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID().uuidString)")!
         let cacheStore = StockChartSeriesCacheStore(defaults: defaults)
         let session = Self.makeSession()
-        let client = TossInvestMarketDataClient(
+        let client = Self.makeClient(
             credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
             session: session,
             chartSeriesCacheStore: cacheStore
@@ -606,7 +670,7 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         let timeZone = TimeZone(identifier: "America/New_York")!
         let sessionStart = Self.date(year: 2026, month: 1, day: 15, hour: 20, timeZone: timeZone)
         let currentDate = sessionStart.addingTimeInterval(60 * 60)
-        let client = TossInvestMarketDataClient(
+        let client = Self.makeClient(
             credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
             session: session,
             chartSeriesCacheStore: cacheStore,
@@ -674,7 +738,7 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
             sessionIdentifier: "usDayMarket",
             referenceDate: currentDate
         )
-        let client = TossInvestMarketDataClient(
+        let client = Self.makeClient(
             credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
             session: Self.makeSession(),
             chartSeriesCacheStore: cacheStore,
@@ -724,7 +788,7 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
             sessionIdentifier: "usDayMarket",
             referenceDate: currentDate
         )
-        let client = TossInvestMarketDataClient(
+        let client = Self.makeClient(
             credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
             session: session,
             chartSeriesCacheStore: cacheStore,
@@ -767,7 +831,7 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         let standardStart = Self.date(year: 2026, month: 6, day: 25, hour: 4, timeZone: timeZone)
         let dayMarketStart = Self.date(year: 2026, month: 6, day: 25, hour: 20, timeZone: timeZone)
         let currentDate = Self.date(year: 2026, month: 6, day: 26, hour: 0, minute: 21, timeZone: timeZone)
-        let client = TossInvestMarketDataClient(
+        let client = Self.makeClient(
             credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
             session: session,
             chartSeriesCacheStore: cacheStore,
@@ -872,7 +936,7 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
             timeZoneIdentifier: timeZone.identifier,
             referenceDate: currentHoliday
         )
-        let client = TossInvestMarketDataClient(
+        let client = Self.makeClient(
             credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
             session: session,
             chartSeriesCacheStore: cacheStore,
@@ -940,7 +1004,7 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
             timeZoneIdentifier: timeZone.identifier,
             referenceDate: currentHoliday
         )
-        let client = TossInvestMarketDataClient(
+        let client = Self.makeClient(
             credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
             session: session,
             chartSeriesCacheStore: cacheStore,
@@ -990,7 +1054,7 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         let regularOpen = Self.date(year: 2026, month: 1, day: 16, hour: 9, minute: 30, timeZone: timeZone)
         let regularClose = Self.date(year: 2026, month: 1, day: 16, hour: 16, timeZone: timeZone)
         let currentDate = Self.date(year: 2026, month: 1, day: 16, hour: 10, timeZone: timeZone)
-        let client = TossInvestMarketDataClient(
+        let client = Self.makeClient(
             credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
             session: session,
             chartSeriesCacheStore: cacheStore,
@@ -1062,7 +1126,7 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
             timeZoneIdentifier: timeZone.identifier,
             referenceDate: currentDate
         )
-        let client = TossInvestMarketDataClient(
+        let client = Self.makeClient(
             credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
             session: session,
             chartSeriesCacheStore: cacheStore,
@@ -1160,7 +1224,7 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
             timeZoneIdentifier: timeZone.identifier,
             referenceDate: currentDate
         )
-        let client = TossInvestMarketDataClient(
+        let client = Self.makeClient(
             credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
             session: session,
             chartSeriesCacheStore: cacheStore,
@@ -1215,7 +1279,7 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
     func testCalendarIsSharedAcrossSymbolsAndUsesUSBusinessDateInChart() async throws {
         let defaults = UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID())")!
         let now = Self.isoFormatter.date(from: "2026-03-25T09:30:00+09:00")!
-        let client = TossInvestMarketDataClient(
+        let client = Self.makeClient(
             credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
             session: Self.makeSession(), chartSeriesCacheStore: StockChartSeriesCacheStore(defaults: defaults), currentDate: { now })
         for symbol in ["AAPL", "MSFT"] {
@@ -1235,7 +1299,7 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         let now = Self.isoFormatter.date(from: "2026-03-25T09:30:00+09:00")!
         let previousDay = Self.isoFormatter.date(from: "2026-03-24T09:20:00+09:00")!
         let previousRegular = Self.isoFormatter.date(from: "2026-03-24T22:40:00+09:00")!
-        let client = TossInvestMarketDataClient(
+        let client = Self.makeClient(
             credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
             session: Self.makeSession(), chartSeriesCacheStore: StockChartSeriesCacheStore(defaults: defaults), currentDate: { now })
         MockTossInvestURLProtocol.candle1mResponses = [previousDay, previousRegular].map { start in
@@ -1256,7 +1320,7 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         store.save(candles: Self.intradayCandles([now.addingTimeInterval(-600), now], venue: "KRX"),
                    isComplete: true, for: "005930", dayIdentifier: "2026-03-25", timeZoneIdentifier: "Asia/Seoul", referenceDate: now)
         MockTossInvestURLProtocol.calendarFails = true
-        let client = TossInvestMarketDataClient(
+        let client = Self.makeClient(
             credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
             session: Self.makeSession(), chartSeriesCacheStore: store, currentDate: { now })
         for _ in 0..<2 {
@@ -1269,6 +1333,25 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["prices"], 2)
         XCTAssertNil(MockTossInvestURLProtocol.requestCounts["1m"])
         XCTAssertNil(store.marketCalendar(country: "KR"))
+    }
+
+    // Each client gets isolated token storage unless a test explicitly shares it.
+    private static func makeClient(
+        credentialsStore: any TossInvestCredentialsProviding,
+        session: URLSession,
+        chartSeriesCacheStore: StockChartSeriesCacheStore = StockChartSeriesCacheStore(
+            defaults: UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID())")!
+        ),
+        accessTokenStore: any TossInvestAccessTokenStoring = StubAccessTokenStore(),
+        currentDate: @escaping () -> Date = Date.init
+    ) -> TossInvestMarketDataClient {
+        TossInvestMarketDataClient(
+            credentialsStore: credentialsStore,
+            session: session,
+            chartSeriesCacheStore: chartSeriesCacheStore,
+            accessTokenStore: accessTokenStore,
+            currentDate: currentDate
+        )
     }
 
     private static func makeSession() -> URLSession {
@@ -1402,8 +1485,27 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
     }()
 }
 
-private struct StubCredentialsStore: TossInvestCredentialsProviding {
+private struct StubCredentialsStore: TossInvestCredentialsProviding, TossInvestAccessTokenStoreProviding {
     let credentials: TossInvestCredentials?
+    let accessTokenStore: any TossInvestAccessTokenStoring = StubAccessTokenStore()
+}
+
+private final class StubAccessTokenStore: TossInvestAccessTokenStoring {
+    private var storedToken: TossInvestAccessToken?
+
+    func token(for credentials: TossInvestCredentials, now: Date) -> TossInvestAccessToken? {
+        guard let storedToken, storedToken.expiresAt > now else { return nil }
+        return storedToken
+    }
+
+    func save(_ token: TossInvestAccessToken, for credentials: TossInvestCredentials) {
+        storedToken = token
+    }
+
+    func invalidate(_ token: String, for credentials: TossInvestCredentials) {
+        guard storedToken?.value == token else { return }
+        storedToken = nil
+    }
 }
 
 private final class MockTossInvestURLProtocol: URLProtocol {
@@ -1415,6 +1517,9 @@ private final class MockTossInvestURLProtocol: URLProtocol {
     static var rejectedBearerTokens: Set<String> = []
     static var calendarFails = false
     static var calendarQueries: [String] = []
+    static var priceStatusCodes: [Int] = []
+    static var responseHeaders: [String: String] = [:]
+    static var requestedSymbolBatchCounts: [Int] = []
 
     override class func canInit(with request: URLRequest) -> Bool {
         true
@@ -1440,6 +1545,7 @@ private final class MockTossInvestURLProtocol: URLProtocol {
             response = Self.tokenResponse()
         case "/api/v1/stocks":
             Self.requestCounts["stocks", default: 0] += 1
+            Self.requestedSymbolBatchCounts.append(Self.requestedSymbols(from: url).count)
             if Self.shouldRejectBearerToken(in: request) {
                 statusCode = 401
                 response = Self.invalidTokenResponse()
@@ -1448,7 +1554,11 @@ private final class MockTossInvestURLProtocol: URLProtocol {
             }
         case "/api/v1/prices":
             Self.requestCounts["prices", default: 0] += 1
-            if Self.shouldRejectBearerToken(in: request) {
+            Self.requestedSymbolBatchCounts.append(Self.requestedSymbols(from: url).count)
+            if !Self.priceStatusCodes.isEmpty {
+                statusCode = Self.priceStatusCodes.removeFirst()
+                response = statusCode == 200 ? Self.priceResponse(for: Self.requestedSymbol(from: url)) : Self.invalidTokenResponse()
+            } else if Self.shouldRejectBearerToken(in: request) {
                 statusCode = 401
                 response = Self.invalidTokenResponse()
             } else {
@@ -1488,7 +1598,7 @@ private final class MockTossInvestURLProtocol: URLProtocol {
             url: url,
             statusCode: statusCode,
             httpVersion: "HTTP/1.1",
-            headerFields: ["Content-Type": "application/json"]
+            headerFields: ["Content-Type": "application/json"].merging(Self.responseHeaders) { _, new in new }
         )!
         client?.urlProtocol(self, didReceive: httpResponse, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: responseData)
@@ -1566,6 +1676,15 @@ private final class MockTossInvestURLProtocol: URLProtocol {
             .split(separator: ",")
             .first
             .map(String.init) ?? "005930"
+    }
+
+    private static func requestedSymbols(from url: URL) -> [String] {
+        URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?
+            .first(where: { $0.name == "symbols" || $0.name == "symbol" })?
+            .value?
+            .split(separator: ",")
+            .map(String.init) ?? []
     }
 }
 

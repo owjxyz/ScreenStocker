@@ -1,7 +1,7 @@
 import Foundation
 import Security
 
-struct TossInvestCredentials: Equatable {
+struct TossInvestCredentials: Codable, Equatable {
     var apiKey: String
     var secretKey: String
 

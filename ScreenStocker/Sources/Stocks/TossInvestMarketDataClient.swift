@@ -10,6 +10,10 @@ protocol TossInvestCredentialsProviding {
     var credentials: TossInvestCredentials? { get }
 }
 
+protocol TossInvestAccessTokenStoreProviding {
+    var accessTokenStore: any TossInvestAccessTokenStoring { get }
+}
+
 private actor TossInvestAccessTokenCache {
     private struct CachedToken {
         let credentials: TossInvestCredentials
@@ -67,6 +71,28 @@ private actor TossInvestAccessTokenCache {
     func invalidate(_ token: String) {
         guard cachedToken?.value == token else { return }
         cachedToken = nil
+    }
+}
+
+private final class TossInvestTokenIssuanceLock {
+    private let lock: NSDistributedLock?
+
+    init() {
+        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("ScreenStocker", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        lock = NSDistributedLock(path: directory.appendingPathComponent("tossinvest-token.lock").path)
+    }
+
+    func withLock<T>(_ operation: () async throws -> T) async throws -> T {
+        guard let lock else { throw TossInvestMarketDataError.apiError("Could not create the Toss token lock.") }
+        let deadline = Date().addingTimeInterval(5)
+        while !lock.try() {
+            guard Date() < deadline else { throw TossInvestMarketDataError.apiError("Timed out waiting to issue a Toss access token.") }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        defer { lock.unlock() }
+        return try await operation()
     }
 }
 
@@ -275,6 +301,8 @@ final class TossInvestMarketDataClient {
     private let chartSeriesCacheStore: StockChartSeriesCacheStore
     private let currentDate: () -> Date
     private let accessTokenCache = TossInvestAccessTokenCache()
+    private let accessTokenStore: any TossInvestAccessTokenStoring
+    private let tokenIssuanceLock = TossInvestTokenIssuanceLock()
     private let calendarRefresh = StockMarketCalendarRefresh()
     private let baseURL = URL(string: "https://openapi.tossinvest.com")!
     private let decoder: JSONDecoder
@@ -290,11 +318,15 @@ final class TossInvestMarketDataClient {
         credentialsStore: any TossInvestCredentialsProviding = TossInvestCredentialsStore(),
         session: URLSession = .shared,
         chartSeriesCacheStore: StockChartSeriesCacheStore = StockChartSeriesCacheStore(),
+        accessTokenStore: (any TossInvestAccessTokenStoring)? = nil,
         currentDate: @escaping () -> Date = Date.init
     ) {
         self.credentialsStore = credentialsStore
         self.session = session
         self.chartSeriesCacheStore = chartSeriesCacheStore
+        self.accessTokenStore = accessTokenStore
+            ?? (credentialsStore as? any TossInvestAccessTokenStoreProviding)?.accessTokenStore
+            ?? TossInvestAccessTokenStore()
         self.currentDate = currentDate
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
@@ -306,12 +338,18 @@ final class TossInvestMarketDataClient {
     func quotes(for symbols: [String]) async throws -> [String: StockQuote] {
         let normalizedSymbols = symbols.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() }
             .filter { !$0.isEmpty }
-        guard !normalizedSymbols.isEmpty else { return [:] }
+        let uniqueSymbols = Array(NSOrderedSet(array: normalizedSymbols)) as! [String]
+        guard !uniqueSymbols.isEmpty else { return [:] }
 
         return try await withAccessTokenRetry { token in
-            let stockInfos = (try? await fetchStockInfos(symbols: normalizedSymbols, token: token)) ?? []
+            let batches = uniqueSymbols.chunked(into: 200)
+            var stockInfos: [StockInfoResponse] = []
+            var prices: [PriceResponse] = []
+            for batch in batches {
+                stockInfos += (try? await fetchStockInfos(symbols: batch, token: token)) ?? []
+                prices += try await fetchPrices(symbols: batch, token: token)
+            }
             let stockInfoBySymbol = Dictionary(uniqueKeysWithValues: stockInfos.map { ($0.symbol, $0) })
-            let prices = try await fetchPrices(symbols: normalizedSymbols, token: token)
             let previousCloses = await previousDailyCloses(for: prices, token: token)
 
             return Dictionary(uniqueKeysWithValues: prices.map { price in
@@ -381,6 +419,10 @@ final class TossInvestMarketDataClient {
         guard let quote = try await quotes(for: [normalizedSymbol])[normalizedSymbol] else {
             throw TossInvestMarketDataError.invalidResponse
         }
+        return await snapshot(for: quote)
+    }
+
+    func snapshot(for quote: StockQuote) async -> StockMarketSnapshot {
         let series = await chartSeries(for: quote)
         let refreshedQuote = StockQuote(
             symbol: quote.symbol,
@@ -460,11 +502,21 @@ final class TossInvestMarketDataClient {
         }
 
         let now = currentDate()
+        if let token = accessTokenStore.token(for: credentials, now: now) {
+            return token.value
+        }
         return try await accessTokenCache.token(for: credentials, now: now) { [self] in
-            let response = try await requestAccessToken(credentials: credentials)
-            let lifetime = response.expiresIn ?? Self.defaultAccessTokenLifetime
-            let usableLifetime = max(lifetime - Self.accessTokenExpiryLeeway, 60)
-            return (response.accessToken, now.addingTimeInterval(usableLifetime))
+            try await tokenIssuanceLock.withLock {
+                if let token = accessTokenStore.token(for: credentials, now: now) {
+                    return (token.value, token.expiresAt)
+                }
+                let response = try await requestAccessToken(credentials: credentials)
+                let lifetime = response.expiresIn ?? Self.defaultAccessTokenLifetime
+                let usableLifetime = max(lifetime - Self.accessTokenExpiryLeeway, 60)
+                let token = TossInvestAccessToken(value: response.accessToken, expiresAt: now.addingTimeInterval(usableLifetime))
+                accessTokenStore.save(token, for: credentials)
+                return (token.value, token.expiresAt)
+            }
         }
     }
 
@@ -477,6 +529,9 @@ final class TossInvestMarketDataClient {
             return try await operation(token)
         } catch let error as TossInvestMarketDataError where error.isAuthenticationRejection {
             await accessTokenCache.invalidate(token)
+            if let credentials = credentialsStore.credentials {
+                accessTokenStore.invalidate(token, for: credentials)
+            }
             let refreshedToken = try await issueAccessToken()
             return try await operation(refreshedToken)
         }
@@ -1257,16 +1312,23 @@ final class TossInvestMarketDataClient {
     }
 
     private func validatedData(for request: URLRequest) async throws -> Data {
-        let (data, response) = try await session.data(for: request)
+        for attempt in 0...1 {
+            let (data, response) = try await session.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw TossInvestMarketDataError.invalidResponse
+        }
+
+        if httpResponse.statusCode == 429, attempt == 0 {
+            let seconds = Double(httpResponse.value(forHTTPHeaderField: "Retry-After") ?? "0") ?? 0
+            if seconds > 0 { try await Task.sleep(for: .seconds(seconds)) }
+            continue
         }
 
         guard (200..<300).contains(httpResponse.statusCode) else {
             if let oauthError = try? decoder.decode(OAuthErrorResponse.self, from: data),
                oauthError.error != nil || oauthError.errorDescription != nil {
                 let code = oauthError.error.map { "\($0): " } ?? ""
-                let message = "\(code)\(oauthError.errorDescription ?? "Request failed.")"
+                let message = Self.message("\(code)\(oauthError.errorDescription ?? "Request failed.")", response: httpResponse)
                 if Self.isAuthenticationRejection(statusCode: httpResponse.statusCode, code: oauthError.error) {
                     throw TossInvestMarketDataError.authenticationRejected(message)
                 }
@@ -1276,30 +1338,33 @@ final class TossInvestMarketDataClient {
             if let envelope = try? decoder.decode(ErrorEnvelope.self, from: data),
                let error = envelope.error {
                 let code = error.code.map { "\($0): " } ?? ""
-                let message = "\(code)\(error.message ?? "Request failed.")"
+                let message = Self.message("\(code)\(error.message ?? "Request failed.")", response: httpResponse)
                 if Self.isAuthenticationRejection(statusCode: httpResponse.statusCode, code: error.code) {
                     throw TossInvestMarketDataError.authenticationRejected(message)
                 }
                 throw TossInvestMarketDataError.apiError(message)
             }
-            let message = "Request failed with HTTP \(httpResponse.statusCode)."
+            let message = Self.message("Request failed with HTTP \(httpResponse.statusCode).", response: httpResponse)
             if Self.isAuthenticationRejection(statusCode: httpResponse.statusCode, code: nil) {
                 throw TossInvestMarketDataError.authenticationRejected(message)
             }
             throw TossInvestMarketDataError.apiError(message)
         }
         return data
+        }
+        throw TossInvestMarketDataError.invalidResponse
     }
 
     private static func isAuthenticationRejection(statusCode: Int, code: String?) -> Bool {
-        if statusCode == 401 || statusCode == 403 {
-            return true
-        }
-
         let normalizedCode = code?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        return normalizedCode == "invalid-token" || normalizedCode == "invalid_token"
+        return statusCode == 401 && ["invalid-token", "invalid_token", "expired-token", "token-revoked"].contains(normalizedCode)
+    }
+
+    private static func message(_ text: String, response: HTTPURLResponse) -> String {
+        guard let requestID = response.value(forHTTPHeaderField: "X-Request-Id"), !requestID.isEmpty else { return text }
+        return "\(text) Request ID: \(requestID)"
     }
 
     private func apiURL(path: String) -> URL {
@@ -1360,5 +1425,11 @@ private extension KeyedDecodingContainer {
         }
 
         return nil
+    }
+}
+
+private extension Array {
+    func chunked(into size: Int) -> [[Element]] {
+        stride(from: 0, to: count, by: size).map { Array(self[$0..<Swift.min($0 + size, count)]) }
     }
 }
