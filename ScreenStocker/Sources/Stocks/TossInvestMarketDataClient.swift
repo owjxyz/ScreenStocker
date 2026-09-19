@@ -74,6 +74,28 @@ private actor TossInvestAccessTokenCache {
     }
 }
 
+private final class TossInvestTokenIssuanceLock {
+    private let lock: NSDistributedLock?
+
+    init() {
+        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("ScreenStocker", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        lock = NSDistributedLock(path: directory.appendingPathComponent("tossinvest-token.lock").path)
+    }
+
+    func withLock<T>(_ operation: () async throws -> T) async throws -> T {
+        guard let lock else { throw TossInvestMarketDataError.apiError("Could not create the Toss token lock.") }
+        let deadline = Date().addingTimeInterval(5)
+        while !lock.try() {
+            guard Date() < deadline else { throw TossInvestMarketDataError.apiError("Timed out waiting to issue a Toss access token.") }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        defer { lock.unlock() }
+        return try await operation()
+    }
+}
+
 enum TossInvestMarketDataError: LocalizedError {
     case missingCredentials
     case invalidResponse
@@ -280,6 +302,7 @@ final class TossInvestMarketDataClient {
     private let currentDate: () -> Date
     private let accessTokenCache = TossInvestAccessTokenCache()
     private let accessTokenStore: any TossInvestAccessTokenStoring
+    private let tokenIssuanceLock = TossInvestTokenIssuanceLock()
     private let calendarRefresh = StockMarketCalendarRefresh()
     private let baseURL = URL(string: "https://openapi.tossinvest.com")!
     private let decoder: JSONDecoder
@@ -483,15 +506,17 @@ final class TossInvestMarketDataClient {
             return token.value
         }
         return try await accessTokenCache.token(for: credentials, now: now) { [self] in
-            if let token = accessTokenStore.token(for: credentials, now: now) {
+            try await tokenIssuanceLock.withLock {
+                if let token = accessTokenStore.token(for: credentials, now: now) {
+                    return (token.value, token.expiresAt)
+                }
+                let response = try await requestAccessToken(credentials: credentials)
+                let lifetime = response.expiresIn ?? Self.defaultAccessTokenLifetime
+                let usableLifetime = max(lifetime - Self.accessTokenExpiryLeeway, 60)
+                let token = TossInvestAccessToken(value: response.accessToken, expiresAt: now.addingTimeInterval(usableLifetime))
+                accessTokenStore.save(token, for: credentials)
                 return (token.value, token.expiresAt)
             }
-            let response = try await requestAccessToken(credentials: credentials)
-            let lifetime = response.expiresIn ?? Self.defaultAccessTokenLifetime
-            let usableLifetime = max(lifetime - Self.accessTokenExpiryLeeway, 60)
-            let token = TossInvestAccessToken(value: response.accessToken, expiresAt: now.addingTimeInterval(usableLifetime))
-            accessTokenStore.save(token, for: credentials)
-            return (token.value, token.expiresAt)
         }
     }
 
