@@ -275,6 +275,7 @@ final class TossInvestMarketDataClient {
     private let chartSeriesCacheStore: StockChartSeriesCacheStore
     private let currentDate: () -> Date
     private let accessTokenCache = TossInvestAccessTokenCache()
+    private let accessTokenStore: any TossInvestAccessTokenStoring
     private let calendarRefresh = StockMarketCalendarRefresh()
     private let baseURL = URL(string: "https://openapi.tossinvest.com")!
     private let decoder: JSONDecoder
@@ -290,11 +291,13 @@ final class TossInvestMarketDataClient {
         credentialsStore: any TossInvestCredentialsProviding = TossInvestCredentialsStore(),
         session: URLSession = .shared,
         chartSeriesCacheStore: StockChartSeriesCacheStore = StockChartSeriesCacheStore(),
+        accessTokenStore: any TossInvestAccessTokenStoring = TossInvestAccessTokenStore(),
         currentDate: @escaping () -> Date = Date.init
     ) {
         self.credentialsStore = credentialsStore
         self.session = session
         self.chartSeriesCacheStore = chartSeriesCacheStore
+        self.accessTokenStore = accessTokenStore
         self.currentDate = currentDate
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
@@ -460,11 +463,19 @@ final class TossInvestMarketDataClient {
         }
 
         let now = currentDate()
+        if let token = accessTokenStore.token(for: credentials, now: now) {
+            return token.value
+        }
         return try await accessTokenCache.token(for: credentials, now: now) { [self] in
+            if let token = accessTokenStore.token(for: credentials, now: now) {
+                return (token.value, token.expiresAt)
+            }
             let response = try await requestAccessToken(credentials: credentials)
             let lifetime = response.expiresIn ?? Self.defaultAccessTokenLifetime
             let usableLifetime = max(lifetime - Self.accessTokenExpiryLeeway, 60)
-            return (response.accessToken, now.addingTimeInterval(usableLifetime))
+            let token = TossInvestAccessToken(value: response.accessToken, expiresAt: now.addingTimeInterval(usableLifetime))
+            accessTokenStore.save(token, for: credentials)
+            return (token.value, token.expiresAt)
         }
     }
 
@@ -477,6 +488,9 @@ final class TossInvestMarketDataClient {
             return try await operation(token)
         } catch let error as TossInvestMarketDataError where error.isAuthenticationRejection {
             await accessTokenCache.invalidate(token)
+            if let credentials = credentialsStore.credentials {
+                accessTokenStore.invalidate(token, for: credentials)
+            }
             let refreshedToken = try await issueAccessToken()
             return try await operation(refreshedToken)
         }

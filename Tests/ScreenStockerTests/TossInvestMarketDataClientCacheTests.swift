@@ -30,6 +30,29 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["prices"], 2)
     }
 
+    func testSeparateClientsReuseSharedAccessToken() async throws {
+        let credentials = TossInvestCredentials(apiKey: "key", secretKey: "secret")
+        let tokenStore = StubAccessTokenStore()
+        let firstClient = TossInvestMarketDataClient(
+            credentialsStore: StubCredentialsStore(credentials: credentials),
+            session: Self.makeSession(),
+            chartSeriesCacheStore: StockChartSeriesCacheStore(defaults: UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID().uuidString)")!),
+            accessTokenStore: tokenStore
+        )
+        let secondClient = TossInvestMarketDataClient(
+            credentialsStore: StubCredentialsStore(credentials: credentials),
+            session: Self.makeSession(),
+            chartSeriesCacheStore: StockChartSeriesCacheStore(defaults: UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID().uuidString)")!),
+            accessTokenStore: tokenStore
+        )
+        MockTossInvestURLProtocol.candle1dResponse = Self.makeDailyCandlePageData()
+
+        _ = try await firstClient.quotes(for: ["005930"])
+        _ = try await secondClient.quotes(for: ["005930"])
+
+        XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["token"], 1)
+    }
+
     func testRejectedCachedTokenIsReissuedAndRequestRetriesOnce() async throws {
         let defaults = UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID().uuidString)")!
         let client = TossInvestMarketDataClient(
@@ -1404,6 +1427,24 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
 
 private struct StubCredentialsStore: TossInvestCredentialsProviding {
     let credentials: TossInvestCredentials?
+}
+
+private final class StubAccessTokenStore: TossInvestAccessTokenStoring {
+    private var storedToken: TossInvestAccessToken?
+
+    func token(for credentials: TossInvestCredentials, now: Date) -> TossInvestAccessToken? {
+        guard let storedToken, storedToken.expiresAt > now else { return nil }
+        return storedToken
+    }
+
+    func save(_ token: TossInvestAccessToken, for credentials: TossInvestCredentials) {
+        storedToken = token
+    }
+
+    func invalidate(_ token: String, for credentials: TossInvestCredentials) {
+        guard storedToken?.value == token else { return }
+        storedToken = nil
+    }
 }
 
 private final class MockTossInvestURLProtocol: URLProtocol {
