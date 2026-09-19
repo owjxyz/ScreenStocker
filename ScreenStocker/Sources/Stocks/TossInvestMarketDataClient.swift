@@ -1328,7 +1328,7 @@ final class TossInvestMarketDataClient {
             if let oauthError = try? decoder.decode(OAuthErrorResponse.self, from: data),
                oauthError.error != nil || oauthError.errorDescription != nil {
                 let code = oauthError.error.map { "\($0): " } ?? ""
-                let message = "\(code)\(oauthError.errorDescription ?? "Request failed.")"
+                let message = Self.message("\(code)\(oauthError.errorDescription ?? "Request failed.")", response: httpResponse)
                 if Self.isAuthenticationRejection(statusCode: httpResponse.statusCode, code: oauthError.error) {
                     throw TossInvestMarketDataError.authenticationRejected(message)
                 }
@@ -1338,14 +1338,13 @@ final class TossInvestMarketDataClient {
             if let envelope = try? decoder.decode(ErrorEnvelope.self, from: data),
                let error = envelope.error {
                 let code = error.code.map { "\($0): " } ?? ""
-                let message = "\(code)\(error.message ?? "Request failed.")"
+                let message = Self.message("\(code)\(error.message ?? "Request failed.")", response: httpResponse)
                 if Self.isAuthenticationRejection(statusCode: httpResponse.statusCode, code: error.code) {
                     throw TossInvestMarketDataError.authenticationRejected(message)
                 }
                 throw TossInvestMarketDataError.apiError(message)
             }
-            let requestID = httpResponse.value(forHTTPHeaderField: "X-Request-Id").map { " Request ID: \($0)" } ?? ""
-            let message = "Request failed with HTTP \(httpResponse.statusCode).\(requestID)"
+            let message = Self.message("Request failed with HTTP \(httpResponse.statusCode).", response: httpResponse)
             if Self.isAuthenticationRejection(statusCode: httpResponse.statusCode, code: nil) {
                 throw TossInvestMarketDataError.authenticationRejected(message)
             }
@@ -1361,6 +1360,11 @@ final class TossInvestMarketDataClient {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
         return statusCode == 401 && ["invalid-token", "invalid_token", "expired-token", "token-revoked"].contains(normalizedCode)
+    }
+
+    private static func message(_ text: String, response: HTTPURLResponse) -> String {
+        guard let requestID = response.value(forHTTPHeaderField: "X-Request-Id"), !requestID.isEmpty else { return text }
+        return "\(text) Request ID: \(requestID)"
     }
 
     private func apiURL(path: String) -> URL {

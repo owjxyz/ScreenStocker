@@ -13,6 +13,7 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         MockTossInvestURLProtocol.calendarFails = false
         MockTossInvestURLProtocol.calendarQueries = []
         MockTossInvestURLProtocol.priceStatusCodes = []
+        MockTossInvestURLProtocol.responseHeaders = [:]
     }
 
     func testAccessTokenIsReusedAcrossRefreshes() async throws {
@@ -100,6 +101,14 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         do { _ = try await client.quotes(for: ["005930"]); XCTFail("Expected forbidden response.") } catch {}
         XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["token"], 1)
         XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["prices"], 1)
+    }
+
+    func testAPIErrorIncludesRequestID() async throws {
+        let client = Self.makeClient(credentialsStore: StubCredentialsStore(credentials: .init(apiKey: "request-id", secretKey: "secret")), session: Self.makeSession())
+        MockTossInvestURLProtocol.priceStatusCodes = [403]
+        MockTossInvestURLProtocol.responseHeaders = ["X-Request-Id": "req-123"]
+        do { _ = try await client.quotes(for: ["005930"]); XCTFail("Expected forbidden response.") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("Request ID: req-123")) }
     }
 
     func testRateLimitedRequestRetriesOnce() async throws {
@@ -1493,6 +1502,7 @@ private final class MockTossInvestURLProtocol: URLProtocol {
     static var calendarFails = false
     static var calendarQueries: [String] = []
     static var priceStatusCodes: [Int] = []
+    static var responseHeaders: [String: String] = [:]
 
     override class func canInit(with request: URLRequest) -> Bool {
         true
@@ -1569,7 +1579,7 @@ private final class MockTossInvestURLProtocol: URLProtocol {
             url: url,
             statusCode: statusCode,
             httpVersion: "HTTP/1.1",
-            headerFields: ["Content-Type": "application/json"]
+            headerFields: ["Content-Type": "application/json"].merging(Self.responseHeaders) { _, new in new }
         )!
         client?.urlProtocol(self, didReceive: httpResponse, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: responseData)
