@@ -14,6 +14,7 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         MockTossInvestURLProtocol.calendarQueries = []
         MockTossInvestURLProtocol.priceStatusCodes = []
         MockTossInvestURLProtocol.responseHeaders = [:]
+        MockTossInvestURLProtocol.requestedSymbolBatchCounts = []
     }
 
     func testAccessTokenIsReusedAcrossRefreshes() async throws {
@@ -116,6 +117,21 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         MockTossInvestURLProtocol.priceStatusCodes = [429, 200]
         _ = try await client.quotes(for: ["005930"])
         XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["prices"], 2)
+    }
+
+    func testQuotesSplit201SymbolsIntoTwoRequestsAndDeduplicate() async throws {
+        let symbols = (1...201).map { String(format: "%06d", $0) } + ["000001", "000201"]
+        let client = Self.makeClient(credentialsStore: StubCredentialsStore(credentials: .init(apiKey: "batch", secretKey: "secret")), session: Self.makeSession())
+        _ = try await client.quotes(for: symbols)
+        XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["prices"], 2)
+        XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["stocks"], 2)
+        XCTAssertEqual(MockTossInvestURLProtocol.requestedSymbolBatchCounts, [200, 200, 1, 1])
+    }
+
+    func testSnapshotForQuoteDoesNotRequestPrices() async throws {
+        let client = Self.makeClient(credentialsStore: StubCredentialsStore(credentials: .init(apiKey: "snapshot", secretKey: "secret")), session: Self.makeSession())
+        _ = await client.snapshot(for: StockQuote(symbol: "005930", displayName: nil, exchangeLabel: "KRX", price: 70_000, changePercent: 0, currency: "KRW", timestamp: Date()))
+        XCTAssertNil(MockTossInvestURLProtocol.requestCounts["prices"])
     }
 
     func testSeparatedQuoteAndChartRefreshFetchesPricesOnce() async throws {
@@ -1503,6 +1519,7 @@ private final class MockTossInvestURLProtocol: URLProtocol {
     static var calendarQueries: [String] = []
     static var priceStatusCodes: [Int] = []
     static var responseHeaders: [String: String] = [:]
+    static var requestedSymbolBatchCounts: [Int] = []
 
     override class func canInit(with request: URLRequest) -> Bool {
         true
@@ -1528,6 +1545,7 @@ private final class MockTossInvestURLProtocol: URLProtocol {
             response = Self.tokenResponse()
         case "/api/v1/stocks":
             Self.requestCounts["stocks", default: 0] += 1
+            Self.requestedSymbolBatchCounts.append(Self.requestedSymbols(from: url).count)
             if Self.shouldRejectBearerToken(in: request) {
                 statusCode = 401
                 response = Self.invalidTokenResponse()
@@ -1536,6 +1554,7 @@ private final class MockTossInvestURLProtocol: URLProtocol {
             }
         case "/api/v1/prices":
             Self.requestCounts["prices", default: 0] += 1
+            Self.requestedSymbolBatchCounts.append(Self.requestedSymbols(from: url).count)
             if !Self.priceStatusCodes.isEmpty {
                 statusCode = Self.priceStatusCodes.removeFirst()
                 response = statusCode == 200 ? Self.priceResponse(for: Self.requestedSymbol(from: url)) : Self.invalidTokenResponse()
@@ -1657,6 +1676,15 @@ private final class MockTossInvestURLProtocol: URLProtocol {
             .split(separator: ",")
             .first
             .map(String.init) ?? "005930"
+    }
+
+    private static func requestedSymbols(from url: URL) -> [String] {
+        URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?
+            .first(where: { $0.name == "symbols" || $0.name == "symbol" })?
+            .value?
+            .split(separator: ",")
+            .map(String.init) ?? []
     }
 }
 
