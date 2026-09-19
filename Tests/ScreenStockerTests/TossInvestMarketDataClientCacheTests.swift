@@ -135,25 +135,27 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         XCTAssertNil(MockTossInvestURLProtocol.requestCounts["prices"])
     }
 
-    func testQuotesMapsKoreanNXTTradingHaltFromStockInfo() async throws {
-        MockTossInvestURLProtocol.stockInfoMarketDetails = [
-            "005930": [
-                "liquidationTrading": false,
-                "nxtSupported": true,
-                "krxTradingSuspended": false,
-                "nxtTradingSuspended": true
-            ]
+    func testQuotesMapsKoreanMarketStatusPriorityFromStockInfo() async throws {
+        let cases: [(detail: [String: Any], expected: StockMarketStatus)] = [
+            (["liquidationTrading": true, "nxtSupported": true, "krxTradingSuspended": true, "nxtTradingSuspended": true], .liquidationTrading),
+            (["liquidationTrading": false, "nxtSupported": true, "krxTradingSuspended": true, "nxtTradingSuspended": true], .krxTradingSuspended),
+            (["liquidationTrading": false, "nxtSupported": true, "krxTradingSuspended": false, "nxtTradingSuspended": true], .nxtTradingSuspended),
+            (["liquidationTrading": false, "nxtSupported": true, "krxTradingSuspended": false, "nxtTradingSuspended": false], .integratedKRXAndNXT),
+            (["liquidationTrading": false, "nxtSupported": false, "krxTradingSuspended": false], .krxOnly)
         ]
         let client = Self.makeClient(
             credentialsStore: StubCredentialsStore(credentials: .init(apiKey: "status", secretKey: "secret")),
             session: Self.makeSession()
         )
 
-        let quotes = try await client.quotes(for: ["005930"])
-        let quote = try XCTUnwrap(quotes["005930"])
+        for testCase in cases {
+            MockTossInvestURLProtocol.stockInfoMarketDetails = ["005930": testCase.detail]
+            let quotes = try await client.quotes(for: ["005930"])
+            let quote = try XCTUnwrap(quotes["005930"])
 
-        XCTAssertEqual(quote.exchangeLabel, "KOSPI")
-        XCTAssertEqual(quote.marketStatus, .nxtTradingSuspended)
+            XCTAssertEqual(quote.exchangeLabel, "KOSPI")
+            XCTAssertEqual(quote.marketStatus, testCase.expected)
+        }
     }
 
     func testSeparatedQuoteAndChartRefreshFetchesPricesOnce() async throws {
