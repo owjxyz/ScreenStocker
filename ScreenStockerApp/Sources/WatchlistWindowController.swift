@@ -291,8 +291,8 @@ final class WatchlistViewModel: ObservableObject {
             guard !Task.isCancelled else { return }
             marketSnapshots = mergedSnapshots(with: quotes)
 
-            if !requestedSymbol.isEmpty {
-                let screenSaverSnapshot = try await marketDataClient.snapshot(for: requestedSymbol)
+            if let quote = quotes[requestedSymbol] {
+                let screenSaverSnapshot = await marketDataClient.snapshot(for: quote)
                 guard !Task.isCancelled, selectedSymbol == requestedSymbol else { return }
                 marketSnapshots[requestedSymbol] = screenSaverSnapshot
             }

@@ -309,12 +309,18 @@ final class TossInvestMarketDataClient {
     func quotes(for symbols: [String]) async throws -> [String: StockQuote] {
         let normalizedSymbols = symbols.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() }
             .filter { !$0.isEmpty }
-        guard !normalizedSymbols.isEmpty else { return [:] }
+        let uniqueSymbols = Array(NSOrderedSet(array: normalizedSymbols)) as! [String]
+        guard !uniqueSymbols.isEmpty else { return [:] }
 
         return try await withAccessTokenRetry { token in
-            let stockInfos = (try? await fetchStockInfos(symbols: normalizedSymbols, token: token)) ?? []
+            let batches = uniqueSymbols.chunked(into: 200)
+            var stockInfos: [StockInfoResponse] = []
+            var prices: [PriceResponse] = []
+            for batch in batches {
+                stockInfos += (try? await fetchStockInfos(symbols: batch, token: token)) ?? []
+                prices += try await fetchPrices(symbols: batch, token: token)
+            }
             let stockInfoBySymbol = Dictionary(uniqueKeysWithValues: stockInfos.map { ($0.symbol, $0) })
-            let prices = try await fetchPrices(symbols: normalizedSymbols, token: token)
             let previousCloses = await previousDailyCloses(for: prices, token: token)
 
             return Dictionary(uniqueKeysWithValues: prices.map { price in
@@ -384,6 +390,10 @@ final class TossInvestMarketDataClient {
         guard let quote = try await quotes(for: [normalizedSymbol])[normalizedSymbol] else {
             throw TossInvestMarketDataError.invalidResponse
         }
+        return await snapshot(for: quote)
+    }
+
+    func snapshot(for quote: StockQuote) async -> StockMarketSnapshot {
         let series = await chartSeries(for: quote)
         let refreshedQuote = StockQuote(
             symbol: quote.symbol,
@@ -1380,5 +1390,11 @@ private extension KeyedDecodingContainer {
         }
 
         return nil
+    }
+}
+
+private extension Array {
+    func chunked(into size: Int) -> [[Element]] {
+        stride(from: 0, to: count, by: size).map { Array(self[$0..<Swift.min($0 + size, count)]) }
     }
 }
