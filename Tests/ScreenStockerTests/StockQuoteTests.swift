@@ -44,6 +44,15 @@ final class StockQuoteTests: XCTestCase {
         XCTAssertEqual(quote.changePercentText, "-1.23%")
     }
 
+    func testKoreanMarketStatusUsesOfficialDisplayPriority() {
+        XCTAssertEqual(StockMarketStatus.liquidationTrading.label, "Liquidation Trading")
+        XCTAssertEqual(StockMarketStatus.krxTradingSuspended.label, "KRX Trading Halted")
+        XCTAssertEqual(StockMarketStatus.nxtTradingSuspended.label, "NXT Trading Halted")
+        XCTAssertEqual(StockMarketStatus.integratedKRXAndNXT.label, "KRX + NXT Integrated")
+        XCTAssertEqual(StockMarketStatus.krxOnly.label, "KRX Quote")
+        XCTAssertNil(StockMarketStatus.unknown.label)
+    }
+
     func testSymbolInputNormalizesKRXCodeWithLeadingZeroes() {
         XCTAssertEqual(StockSymbolInput.normalizedSymbol(from: " 005930 "), "005930")
     }

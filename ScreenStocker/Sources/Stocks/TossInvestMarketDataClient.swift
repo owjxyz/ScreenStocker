@@ -128,7 +128,6 @@ extension TossInvestCredentialsStore: TossInvestCredentialsProviding {}
 final class TossInvestMarketDataClient {
     private enum TradingVenue {
         case krx
-        case nxt
         case us
     }
 
@@ -206,18 +205,37 @@ final class TossInvestMarketDataClient {
     }
 
     private struct StockInfoResponse: Decodable {
+        struct KoreanMarketDetail: Decodable {
+            let liquidationTrading: Bool
+            let nxtSupported: Bool
+            let krxTradingSuspended: Bool
+            let nxtTradingSuspended: Bool?
+
+            var marketStatus: StockMarketStatus {
+                if liquidationTrading { return .liquidationTrading }
+                if krxTradingSuspended { return .krxTradingSuspended }
+                if nxtTradingSuspended == true { return .nxtTradingSuspended }
+                return nxtSupported ? .integratedKRXAndNXT : .krxOnly
+            }
+        }
+
         let symbol: String
         let name: String
         let englishName: String
         let market: String
         let status: String
         let currency: String
+        let koreanMarketDetail: KoreanMarketDetail?
 
         var localizedDisplayName: String {
             if Locale.preferredLanguages.first?.hasPrefix("ko") == true {
                 return name
             }
             return englishName.isEmpty ? name : englishName
+        }
+
+        var marketStatus: StockMarketStatus {
+            koreanMarketDetail?.marketStatus ?? .unknown
         }
     }
 
@@ -236,9 +254,6 @@ final class TossInvestMarketDataClient {
         let highPrice: Decimal?
         let lowPrice: Decimal?
         let closePrice: Decimal
-        let market: String?
-        let exchange: String?
-        let venue: String?
 
         private enum CodingKeys: String, CodingKey {
             case timestamp
@@ -246,12 +261,6 @@ final class TossInvestMarketDataClient {
             case highPrice
             case lowPrice
             case closePrice
-            case market
-            case exchange
-            case venue
-            case tradingVenue
-            case marketCode
-            case exchangeCode
         }
 
         init(from decoder: Decoder) throws {
@@ -261,12 +270,6 @@ final class TossInvestMarketDataClient {
             highPrice = try container.decodeDecimalIfPresent(forKey: .highPrice)
             lowPrice = try container.decodeDecimalIfPresent(forKey: .lowPrice)
             closePrice = try container.decodeDecimal(forKey: .closePrice)
-            market = try container.decodeIfPresent(String.self, forKey: .market)
-                ?? container.decodeIfPresent(String.self, forKey: .marketCode)
-            exchange = try container.decodeIfPresent(String.self, forKey: .exchange)
-                ?? container.decodeIfPresent(String.self, forKey: .exchangeCode)
-            venue = try container.decodeIfPresent(String.self, forKey: .venue)
-                ?? container.decodeIfPresent(String.self, forKey: .tradingVenue)
         }
 
         init(
@@ -274,25 +277,13 @@ final class TossInvestMarketDataClient {
             openPrice: Decimal,
             highPrice: Decimal?,
             lowPrice: Decimal?,
-            closePrice: Decimal,
-            market: String?,
-            exchange: String?,
-            venue: String?
+            closePrice: Decimal
         ) {
             self.timestamp = timestamp
             self.openPrice = openPrice
             self.highPrice = highPrice
             self.lowPrice = lowPrice
             self.closePrice = closePrice
-            self.market = market
-            self.exchange = exchange
-            self.venue = venue
-        }
-
-        var trackingExchangeLabel: String? {
-            TossInvestMarketDataClient.normalizedExchangeLabel(from: venue)
-                ?? TossInvestMarketDataClient.normalizedExchangeLabel(from: exchange)
-                ?? TossInvestMarketDataClient.normalizedExchangeLabel(from: market)
         }
     }
 
@@ -359,6 +350,7 @@ final class TossInvestMarketDataClient {
                         symbol: price.symbol,
                         displayName: stockInfoBySymbol[price.symbol]?.localizedDisplayName,
                         exchangeLabel: marketLabel(for: stockInfoBySymbol[price.symbol]?.market, symbol: price.symbol),
+                        marketStatus: stockInfoBySymbol[price.symbol]?.marketStatus ?? .unknown,
                         price: price.lastPrice,
                         changePercent: changePercent(price: price.lastPrice, baseline: previousCloses[price.symbol]),
                         currency: price.currency,
@@ -427,7 +419,8 @@ final class TossInvestMarketDataClient {
         let refreshedQuote = StockQuote(
             symbol: quote.symbol,
             displayName: quote.displayName,
-            exchangeLabel: series.trackingExchangeLabel ?? quote.exchangeLabel,
+            exchangeLabel: quote.exchangeLabel,
+            marketStatus: quote.marketStatus,
             price: quote.price,
             changePercent: quote.changePercent,
             currency: quote.currency,
@@ -453,7 +446,7 @@ final class TossInvestMarketDataClient {
         let fetched = try? await withAccessTokenRetry { token in
             try await fetchIntradaySeriesWithFallback(symbol: symbol, token: token, venue: venue, sessionKind: sessionKind)
         }
-        let cached = cachedChartSeries(for: symbol, exchangeLabel: venue == .nxt ? "NXT" : nil)
+        let cached = cachedChartSeries(for: symbol)
         if let fetched, !renderableSeriesOrEmpty(fetched, venue: venue).points.isEmpty,
            (fetched.points.last?.date ?? .distantPast) >= (cached.points.last?.date ?? .distantPast) {
             return fetched
@@ -769,7 +762,6 @@ final class TossInvestMarketDataClient {
             sessionStart: sessionStart,
             sessionEnd: sessionEnd,
             sessionDividers: sessionDividers,
-            trackingExchangeLabel: latestTrackingExchangeLabel(in: filteredCandles),
             businessDay: group?.day
         )
     }
@@ -815,7 +807,6 @@ final class TossInvestMarketDataClient {
             sessionStart: bounds.start,
             sessionEnd: bounds.end,
             sessionDividers: bounds.dividers.filter { $0 >= bounds.start && $0 <= bounds.end },
-            trackingExchangeLabel: series.trackingExchangeLabel,
             businessDay: group.day
         )
 
@@ -990,10 +981,7 @@ final class TossInvestMarketDataClient {
                 openPrice: $0.closePrice,
                 highPrice: $0.closePrice,
                 lowPrice: $0.closePrice,
-                closePrice: $0.closePrice,
-                market: nil,
-                exchange: nil,
-                venue: nil
+                closePrice: $0.closePrice
             )
         }
     }
@@ -1044,14 +1032,6 @@ final class TossInvestMarketDataClient {
         return (dates.min() ?? latest, latest, [])
     }
 
-    private func latestTrackingExchangeLabel(in candles: [CandleResponse]) -> String? {
-        candles
-            .sorted { $0.timestamp > $1.timestamp }
-            .lazy
-            .compactMap(\.trackingExchangeLabel)
-            .first
-    }
-
     private func aggregateTenMinuteCandles(
         _ candles: [CandleResponse],
         sessionStart: Date,
@@ -1094,9 +1074,9 @@ final class TossInvestMarketDataClient {
             highPrice: candle.highPrice,
             lowPrice: candle.lowPrice,
             closePrice: candle.closePrice,
-            market: candle.market,
-            exchange: candle.exchange,
-            venue: candle.venue
+            market: nil,
+            exchange: nil,
+            venue: nil
         )
     }
 
@@ -1106,10 +1086,7 @@ final class TossInvestMarketDataClient {
             openPrice: candle.openPrice,
             highPrice: candle.highPrice,
             lowPrice: candle.lowPrice,
-            closePrice: candle.closePrice,
-            market: candle.market,
-            exchange: candle.exchange,
-            venue: candle.venue
+            closePrice: candle.closePrice
         )
     }
 
@@ -1217,19 +1194,14 @@ final class TossInvestMarketDataClient {
 
     private static func marketTimeZone(for venue: TradingVenue) -> TimeZone {
         switch venue {
-        case .krx, .nxt:
+        case .krx:
             return TimeZone(identifier: "Asia/Seoul") ?? .current
         case .us:
             return TimeZone(identifier: "America/New_York") ?? .current
         }
     }
 
-    private func tradingVenue(for symbol: String, market: String?) -> TradingVenue {
-        let marketName = market?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() ?? ""
-        if marketName.contains("NXT") {
-            return .nxt
-        }
-
+    private func tradingVenue(for symbol: String, market _: String?) -> TradingVenue {
         switch StockSymbolInput.marketKind(for: symbol) {
         case .krx:
             return .krx
@@ -1276,24 +1248,8 @@ final class TossInvestMarketDataClient {
     }
 
     private func marketLabel(for market: String?, symbol: String) -> String? {
-        if let label = Self.normalizedExchangeLabel(from: market) {
-            return label
-        }
-
-        return StockSymbolInput.marketKind(for: symbol) == .krx ? "KRX" : "US"
-    }
-
-    private static func normalizedExchangeLabel(from value: String?) -> String? {
-        guard let value else { return nil }
-        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-        guard !normalized.isEmpty else { return nil }
-        if normalized.contains("NXT") {
-            return "NXT"
-        }
-        if normalized.contains("KRX") {
-            return "KRX"
-        }
-        return normalized
+        let normalized = market?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        return normalized?.isEmpty == false ? normalized : (StockSymbolInput.marketKind(for: symbol) == .krx ? "KRX" : "US")
     }
 
     private static func dayIdentifier(for date: Date, timeZone: TimeZone) -> String {

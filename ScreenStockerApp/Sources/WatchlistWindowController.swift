@@ -356,7 +356,8 @@ final class WatchlistViewModel: ObservableObject {
                 quote: StockQuote(
                     symbol: existingSnapshot.quote.symbol,
                     displayName: existingSnapshot.quote.displayName,
-                    exchangeLabel: cachedSeries.trackingExchangeLabel ?? existingSnapshot.quote.exchangeLabel,
+                    exchangeLabel: existingSnapshot.quote.exchangeLabel,
+                    marketStatus: existingSnapshot.quote.marketStatus,
                     price: existingSnapshot.quote.price,
                     changePercent: existingSnapshot.quote.changePercent,
                     currency: existingSnapshot.quote.currency,
@@ -384,6 +385,7 @@ final class WatchlistViewModel: ObservableObject {
                     marketSnapshots[symbol]?.quote.exchangeLabel,
                     fallback: quote.exchangeLabel
                 ),
+                marketStatus: quote.marketStatus,
                 price: quote.price,
                 changePercent: changePercent,
                 currency: quote.currency,
