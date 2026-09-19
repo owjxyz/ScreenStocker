@@ -86,13 +86,22 @@ final class StockerPreferences {
     private let defaults: UserDefaults
     private let legacySuiteDefaults = StockerPreferences.legacySuiteNames.compactMap(UserDefaults.init(suiteName:))
     private let legacyDefaults = ScreenSaverDefaults(forModuleWithName: StockerPreferences.legacyModuleName)
+    private let usesSharedPreferences: Bool
 
-    init(defaults: UserDefaults? = UserDefaults(suiteName: StockerPreferences.suiteName)) {
+    init(
+        defaults: UserDefaults? = UserDefaults(suiteName: StockerPreferences.suiteName),
+        usesSharedPreferences: Bool = true
+    ) {
         self.defaults = defaults ?? .standard
-        migrateLegacyDefaultsIfNeeded()
-        removeMarketDataCacheFromPreferencesIfNeeded()
+        self.usesSharedPreferences = usesSharedPreferences
+        if usesSharedPreferences {
+            migrateLegacyDefaultsIfNeeded()
+            removeMarketDataCacheFromPreferencesIfNeeded()
+        }
         repairStoredValuesIfNeeded()
-        mirrorSharedPreferences()
+        if usesSharedPreferences {
+            mirrorSharedPreferences()
+        }
     }
 
     var symbolForScreenSaverDisplay: String? {
@@ -102,8 +111,8 @@ final class StockerPreferences {
     var registeredSymbols: [String] {
         get {
             syncDefaults()
-            guard let stored = Self.hostPreferenceString(forKey: Key.registeredSymbols)
-                ?? Self.hostPreferenceString(forKey: Key.legacySymbols)
+            guard let stored = (usesSharedPreferences ? Self.hostPreferenceString(forKey: Key.registeredSymbols) : nil)
+                ?? (usesSharedPreferences ? Self.hostPreferenceString(forKey: Key.legacySymbols) : nil)
                 ?? defaults.string(forKey: Key.registeredSymbols)
                 ?? defaults.string(forKey: Key.legacySymbols) else {
                 return Self.defaultSymbols
@@ -115,7 +124,9 @@ final class StockerPreferences {
             defaults.set(normalize(symbols: newValue).joined(separator: ","), forKey: Key.registeredSymbols)
             defaults.set(true, forKey: Key.watchlistSaved)
             syncDefaults()
-            mirrorSharedPreferences()
+            if usesSharedPreferences {
+                mirrorSharedPreferences()
+            }
             notifyChanged()
         }
     }
@@ -125,7 +136,7 @@ final class StockerPreferences {
             syncDefaults()
             let storedSymbols = [
                 defaults.string(forKey: Key.selectedSymbol),
-                Self.hostPreferenceString(forKey: Key.selectedSymbol)
+                usesSharedPreferences ? Self.hostPreferenceString(forKey: Key.selectedSymbol) : nil
             ].compactMap { $0 }
 
             for stored in storedSymbols where !stored.isEmpty {
@@ -140,7 +151,9 @@ final class StockerPreferences {
             let selected = normalize(symbols: [newValue ?? ""]).first
             defaults.set(selected ?? "", forKey: Key.selectedSymbol)
             syncDefaults()
-            mirrorSharedPreferences()
+            if usesSharedPreferences {
+                mirrorSharedPreferences()
+            }
             notifyChanged()
         }
     }
@@ -149,13 +162,15 @@ final class StockerPreferences {
         get {
             syncDefaults()
             let storedMode = defaults.string(forKey: Key.appearanceMode)
-                ?? Self.hostPreferenceString(forKey: Key.appearanceMode)
+                ?? (usesSharedPreferences ? Self.hostPreferenceString(forKey: Key.appearanceMode) : nil)
             return storedMode.flatMap(ScreenSaverAppearanceMode.init(rawValue:)) ?? .dark
         }
         set {
             defaults.set(newValue.rawValue, forKey: Key.appearanceMode)
             syncDefaults()
-            mirrorSharedPreferences()
+            if usesSharedPreferences {
+                mirrorSharedPreferences()
+            }
             notifyChanged()
         }
     }
@@ -164,13 +179,15 @@ final class StockerPreferences {
         get {
             syncDefaults()
             let storedStyle = defaults.string(forKey: Key.chartStyle)
-                ?? Self.hostPreferenceString(forKey: Key.chartStyle)
+                ?? (usesSharedPreferences ? Self.hostPreferenceString(forKey: Key.chartStyle) : nil)
             return storedStyle.flatMap(ScreenSaverChartStyle.init(rawValue:)) ?? .line
         }
         set {
             defaults.set(newValue.rawValue, forKey: Key.chartStyle)
             syncDefaults()
-            mirrorSharedPreferences()
+            if usesSharedPreferences {
+                mirrorSharedPreferences()
+            }
             notifyChanged()
         }
     }
@@ -240,7 +257,9 @@ final class StockerPreferences {
 
         if didRepair {
             syncDefaults()
-            mirrorSharedPreferences()
+            if usesSharedPreferences {
+                mirrorSharedPreferences()
+            }
         }
     }
 
