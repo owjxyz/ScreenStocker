@@ -229,7 +229,7 @@ final class StockChartSeriesCacheStoreTests: XCTestCase {
         let suiteName = "com.tasokiii.ScreenStocker.tests.cache.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         let timeZone = TimeZone(identifier: "Asia/Seoul")!
-        let currentDate = Self.date(year: 2026, month: 6, day: 24, hour: 10, timeZone: timeZone)
+        let currentDate = Date()
         let writer = StockChartSeriesCacheStore(defaults: defaults)
         writer.save(
             candles: [Self.candle(timestamp: currentDate, closePrice: 100)],

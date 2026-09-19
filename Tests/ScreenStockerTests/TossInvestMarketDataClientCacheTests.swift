@@ -426,7 +426,7 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         let marketTimeZone = TimeZone(identifier: "Asia/Seoul")!
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = marketTimeZone
-        let today = calendar.startOfDay(for: Date())
+        let today = Self.date(year: 2026, month: 7, day: 2, hour: 0, timeZone: marketTimeZone)
         let eight = calendar.date(byAdding: .hour, value: 8, to: today)!
         let nine = calendar.date(byAdding: .hour, value: 9, to: today)!
         let ten = calendar.date(byAdding: .hour, value: 10, to: today)!
@@ -435,7 +435,8 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         let client = TossInvestMarketDataClient(
             credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
             session: session,
-            chartSeriesCacheStore: cacheStore
+            chartSeriesCacheStore: cacheStore,
+            currentDate: { tenThirty }
         )
 
         MockTossInvestURLProtocol.priceTimestamps = [
@@ -548,12 +549,13 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         let marketTimeZone = TimeZone(identifier: "Asia/Seoul")!
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = marketTimeZone
-        let today = calendar.startOfDay(for: Date())
+        let today = Self.date(year: 2026, month: 7, day: 2, hour: 0, timeZone: marketTimeZone)
         let sessionStart = calendar.date(byAdding: .hour, value: 8, to: today)!
         let client = TossInvestMarketDataClient(
             credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
             session: session,
-            chartSeriesCacheStore: cacheStore
+            chartSeriesCacheStore: cacheStore,
+            currentDate: { sessionStart.addingTimeInterval(2 * 60 * 60) }
         )
         let sessionMinuteTimestamps = Self.krxSessionMinuteTimestamps(on: today, calendar: calendar)
             .sorted(by: >)

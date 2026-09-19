@@ -58,7 +58,7 @@ final class StockQuoteTests: XCTestCase {
 
     func testPreferencesFallBackToDefaultSymbols() {
         let defaults = UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.\(UUID().uuidString)")!
-        let preferences = StockerPreferences(defaults: defaults)
+        let preferences = StockerPreferences(defaults: defaults, usesSharedPreferences: false)
 
         XCTAssertEqual(preferences.registeredSymbols, MarketDataCatalog.symbols)
         XCTAssertTrue(MarketDataCatalog.symbols.contains(preferences.symbolForScreenSaverDisplay ?? ""))
