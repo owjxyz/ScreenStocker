@@ -74,6 +74,19 @@ private actor TossInvestAccessTokenCache {
     }
 }
 
+private actor DailyCloseBaselineCache {
+    private var values: [String: (day: String, close: Decimal)] = [:]
+
+    func close(for symbol: String, day: String) -> Decimal? {
+        guard let value = values[symbol], value.day == day else { return nil }
+        return value.close
+    }
+
+    func save(_ close: Decimal, for symbol: String, day: String) {
+        values[symbol] = (day, close)
+    }
+}
+
 private final class TossInvestTokenIssuanceLock {
     private let lock: NSDistributedLock?
 
@@ -295,6 +308,7 @@ final class TossInvestMarketDataClient {
     private let accessTokenStore: any TossInvestAccessTokenStoring
     private let tokenIssuanceLock = TossInvestTokenIssuanceLock()
     private let calendarRefresh = StockMarketCalendarRefresh()
+    private let dailyCloseBaselineCache = DailyCloseBaselineCache()
     private let baseURL = URL(string: "https://openapi.tossinvest.com")!
     private let decoder: JSONDecoder
     private static let logger = Logger(subsystem: "com.tasokiii.ScreenStocker", category: "marketData")
@@ -943,20 +957,29 @@ final class TossInvestMarketDataClient {
         var previousCloses: [String: Decimal] = [:]
         for price in prices {
             let venue = tradingVenue(for: price.symbol, market: nil)
-            let dailyCandles = await dailyCandles(for: price, token: token)
+            await refreshCalendar(for: venue)
+            let businessDay = price.timestamp.flatMap { calendarGroup(venue: venue, at: $0)?.day }
+            if let businessDay, let cached = await dailyCloseBaselineCache.close(for: price.symbol, day: businessDay) {
+                previousCloses[price.symbol] = cached
+                continue
+            }
+            let (dailyCandles, fetched) = await dailyCandles(for: price, token: token)
             guard let previousClose = previousClose(
-                for: price,
                 dailyCandles: dailyCandles,
-                venue: venue
+                venue: venue,
+                businessDay: businessDay
             ) else {
                 continue
             }
             previousCloses[price.symbol] = previousClose
+            if fetched, let businessDay {
+                await dailyCloseBaselineCache.save(previousClose, for: price.symbol, day: businessDay)
+            }
         }
         return previousCloses
     }
 
-    private func dailyCandles(for price: PriceResponse, token: String) async -> [CandleResponse] {
+    private func dailyCandles(for price: PriceResponse, token: String) async -> (candles: [CandleResponse], fetched: Bool) {
         if let fetchedCandles = try? await fetchDailyCandlePage(symbol: price.symbol, token: token).candles,
            !fetchedCandles.isEmpty {
             chartSeriesCacheStore.saveDailyCloses(
@@ -965,17 +988,17 @@ final class TossInvestMarketDataClient {
                 },
                 for: price.symbol
             )
-            return fetchedCandles
+            return (fetchedCandles, true)
         }
 
         let cachedCloses = chartSeriesCacheStore.dailyCloses(for: price.symbol)
         guard let priceTimestamp = price.timestamp,
               let latestCachedTimestamp = cachedCloses.map(\.timestamp).max(),
               abs(priceTimestamp.timeIntervalSince(latestCachedTimestamp)) <= Self.maximumDailyCloseCacheAge else {
-            return []
+            return ([], false)
         }
 
-        return cachedCloses.map {
+        return (cachedCloses.map {
             CandleResponse(
                 timestamp: $0.timestamp,
                 openPrice: $0.closePrice,
@@ -983,32 +1006,18 @@ final class TossInvestMarketDataClient {
                 lowPrice: $0.closePrice,
                 closePrice: $0.closePrice
             )
-        }
+        }, false)
     }
 
     private func previousClose(
-        for price: PriceResponse,
         dailyCandles: [CandleResponse],
-        venue: TradingVenue
+        venue: TradingVenue,
+        businessDay: String?
     ) -> Decimal? {
-        let sortedCandles = dailyCandles.sorted { $0.timestamp > $1.timestamp }
-        guard !sortedCandles.isEmpty else { return nil }
-
-        guard let priceTimestamp = price.timestamp else {
-            return sortedCandles.dropFirst().first?.closePrice ?? sortedCandles.first?.closePrice
-        }
-
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = Self.marketTimeZone(for: venue)
-        let priceDay = calendar.startOfDay(for: priceTimestamp)
-
-        if let previousTradingDayCandle = sortedCandles.first(where: {
-            calendar.startOfDay(for: $0.timestamp) < priceDay
-        }) {
-            return previousTradingDayCandle.closePrice
-        }
-
-        return sortedCandles.dropFirst().first?.closePrice
+        guard let businessDay else { return nil }
+        return dailyCandles.sorted { $0.timestamp > $1.timestamp }.first {
+            Self.dayIdentifier(for: $0.timestamp, timeZone: Self.marketTimeZone(for: venue)) < businessDay
+        }?.closePrice
     }
 
     private func changePercent(price: Decimal?, baseline: Decimal?) -> Decimal? {
