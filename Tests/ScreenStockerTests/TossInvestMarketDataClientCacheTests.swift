@@ -411,7 +411,8 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         let client = Self.makeClient(
             credentialsStore: StubCredentialsStore(credentials: TossInvestCredentials(apiKey: "key", secretKey: "secret")),
             session: session,
-            chartSeriesCacheStore: cacheStore
+            chartSeriesCacheStore: cacheStore,
+            currentDate: { priceTimestamp }
         )
 
         MockTossInvestURLProtocol.priceTimestamps = [
@@ -432,6 +433,139 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
 
         XCTAssertEqual(firstQuotes["005930"]?.changePercent, secondQuotes["005930"]?.changePercent)
         XCTAssertNotNil(secondQuotes["005930"]?.changePercent)
+    }
+
+    func testKoreanQuotesReuseValidatedDailyCloseUntilCalendarBusinessDayChanges() async throws {
+        let zone = TimeZone(identifier: "Asia/Seoul")!
+        let first = Self.date(year: 2026, month: 6, day: 24, hour: 10, timeZone: zone)
+        let next = Self.date(year: 2026, month: 6, day: 25, hour: 10, timeZone: zone)
+        var now = first
+        let client = Self.makeClient(
+            credentialsStore: StubCredentialsStore(credentials: .init(apiKey: "key", secretKey: "secret")),
+            session: Self.makeSession(),
+            chartSeriesCacheStore: StockChartSeriesCacheStore(defaults: UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID())")!),
+            currentDate: { now }
+        )
+        MockTossInvestURLProtocol.priceTimestamps = [first, first, next].map(Self.isoFormatter.string(from:))
+        MockTossInvestURLProtocol.candle1dResponse = Self.makeCandlePageData(
+            candles: Self.candles([
+                Self.date(year: 2026, month: 6, day: 25, hour: 0, timeZone: zone),
+                Self.date(year: 2026, month: 6, day: 24, hour: 0, timeZone: zone),
+                Self.date(year: 2026, month: 6, day: 23, hour: 0, timeZone: zone)
+            ], closePrice: ["71000", "70000", "68000"]),
+            nextBefore: nil
+        )
+
+        let firstQuotes = try await client.quotes(for: ["005930"])
+        let secondQuotes = try await client.quotes(for: ["005930"])
+        now = next
+        let nextQuotes = try await client.quotes(for: ["005930"])
+
+        XCTAssertEqual(firstQuotes["005930"]?.changePercent, (Decimal(70_000) - 68_000) / 68_000 * 100)
+        XCTAssertEqual(secondQuotes["005930"]?.changePercent, firstQuotes["005930"]?.changePercent)
+        XCTAssertEqual(nextQuotes["005930"]?.changePercent, 0)
+        XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["1d"], 2)
+    }
+
+    func testUSDayMarketUsesCalendarBusinessDayBeforeNewYorkMidnight() async throws {
+        let zone = TimeZone(identifier: "America/New_York")!
+        let dayMarket = Self.isoFormatter.date(from: "2026-03-25T09:10:00+09:00")!
+        let client = Self.makeClient(
+            credentialsStore: StubCredentialsStore(credentials: .init(apiKey: "key", secretKey: "secret")),
+            session: Self.makeSession(),
+            chartSeriesCacheStore: StockChartSeriesCacheStore(defaults: UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID())")!),
+            currentDate: { dayMarket }
+        )
+        MockTossInvestURLProtocol.priceTimestamps = [Self.isoFormatter.string(from: dayMarket)]
+        MockTossInvestURLProtocol.candle1dResponse = Self.makeCandlePageData(
+            candles: Self.candles([
+                Self.date(year: 2026, month: 3, day: 25, hour: 0, timeZone: zone),
+                Self.date(year: 2026, month: 3, day: 24, hour: 0, timeZone: zone),
+                Self.date(year: 2026, month: 3, day: 23, hour: 0, timeZone: zone)
+            ], closePrice: ["110", "100", "90"]),
+            nextBefore: nil
+        )
+
+        let quotes = try await client.quotes(for: ["AAPL"])
+
+        XCTAssertEqual(quotes["AAPL"]?.changePercent, (Decimal(string: "212.45")! - 100) / 100 * 100)
+        XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["1d"], 1)
+    }
+
+    func testKoreanHolidayKeepsPreviousCalendarBusinessDay() async throws {
+        let zone = TimeZone(identifier: "Asia/Seoul")!
+        let tradingDay = Self.date(year: 2026, month: 5, day: 4, hour: 10, timeZone: zone)
+        let holiday = Self.date(year: 2026, month: 5, day: 5, hour: 12, timeZone: zone)
+        var now = tradingDay
+        let client = Self.makeClient(
+            credentialsStore: StubCredentialsStore(credentials: .init(apiKey: "key", secretKey: "secret")),
+            session: Self.makeSession(),
+            chartSeriesCacheStore: StockChartSeriesCacheStore(defaults: UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID())")!),
+            currentDate: { now }
+        )
+        MockTossInvestURLProtocol.priceTimestamps = [tradingDay, holiday].map(Self.isoFormatter.string(from:))
+        MockTossInvestURLProtocol.candle1dResponse = Self.makeCandlePageData(
+            candles: Self.candles([
+                Self.date(year: 2026, month: 5, day: 4, hour: 0, timeZone: zone),
+                Self.date(year: 2026, month: 5, day: 1, hour: 0, timeZone: zone)
+            ], closePrice: ["70000", "68000"]),
+            nextBefore: nil
+        )
+
+        let first = try await client.quotes(for: ["005930"])
+        now = holiday
+        let second = try await client.quotes(for: ["005930"])
+
+        XCTAssertEqual(second["005930"]?.changePercent, first["005930"]?.changePercent)
+        XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["1d"], 1)
+    }
+
+    func testMissingCalendarDoesNotInferPreviousCloseFromLocalDate() async throws {
+        let zone = TimeZone(identifier: "America/New_York")!
+        let timestamp = Self.date(year: 2026, month: 3, day: 25, hour: 11, timeZone: zone)
+        let client = Self.makeClient(
+            credentialsStore: StubCredentialsStore(credentials: .init(apiKey: "key", secretKey: "secret")),
+            session: Self.makeSession(),
+            chartSeriesCacheStore: StockChartSeriesCacheStore(defaults: UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID())")!),
+            currentDate: { timestamp }
+        )
+        MockTossInvestURLProtocol.priceTimestamps = [timestamp, timestamp].map(Self.isoFormatter.string(from:))
+        MockTossInvestURLProtocol.calendarFails = true
+        MockTossInvestURLProtocol.candle1dResponse = Self.makeDailyCandlePageData()
+
+        let first = try await client.quotes(for: ["AAPL"])
+        let second = try await client.quotes(for: ["AAPL"])
+
+        XCTAssertNil(first["AAPL"]?.changePercent)
+        XCTAssertNil(second["AAPL"]?.changePercent)
+        XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["1d"], 2)
+    }
+
+    func testFailedDailyCandleRequestRetriesOnNextQuote() async throws {
+        let zone = TimeZone(identifier: "Asia/Seoul")!
+        let timestamp = Self.date(year: 2026, month: 6, day: 24, hour: 10, timeZone: zone)
+        let client = Self.makeClient(
+            credentialsStore: StubCredentialsStore(credentials: .init(apiKey: "key", secretKey: "secret")),
+            session: Self.makeSession(),
+            chartSeriesCacheStore: StockChartSeriesCacheStore(defaults: UserDefaults(suiteName: "com.tasokiii.ScreenStocker.tests.client.\(UUID())")!),
+            currentDate: { timestamp }
+        )
+        MockTossInvestURLProtocol.priceTimestamps = [timestamp, timestamp, timestamp].map(Self.isoFormatter.string(from:))
+
+        let failed = try await client.quotes(for: ["005930"])
+        MockTossInvestURLProtocol.candle1dResponse = Self.makeCandlePageData(
+            candles: Self.candles([
+                Self.date(year: 2026, month: 6, day: 24, hour: 0, timeZone: zone),
+                Self.date(year: 2026, month: 6, day: 23, hour: 0, timeZone: zone)
+            ], closePrice: ["70000", "68000"]),
+            nextBefore: nil
+        )
+        let recovered = try await client.quotes(for: ["005930"])
+        _ = try await client.quotes(for: ["005930"])
+
+        XCTAssertNil(failed["005930"]?.changePercent)
+        XCTAssertNotNil(recovered["005930"]?.changePercent)
+        XCTAssertEqual(MockTossInvestURLProtocol.requestCounts["1d"], 2)
     }
 
     func testIntradaySeriesUsesCachedMarketDataAfterInitialBackfill() async throws {
@@ -1608,6 +1742,7 @@ private final class MockTossInvestURLProtocol: URLProtocol {
                 Self.requestCounts["1m", default: 0] += 1
                 response = Self.candle1mResponses.isEmpty ? nil : Self.candle1mResponses.removeFirst()
             } else {
+                Self.requestCounts["1d", default: 0] += 1
                 response = Self.candle1dResponse
             }
         default:
