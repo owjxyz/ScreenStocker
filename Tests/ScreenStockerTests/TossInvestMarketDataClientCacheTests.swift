@@ -15,6 +15,7 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         MockTossInvestURLProtocol.priceStatusCodes = []
         MockTossInvestURLProtocol.responseHeaders = [:]
         MockTossInvestURLProtocol.requestedSymbolBatchCounts = []
+        MockTossInvestURLProtocol.stockInfoMarketDetails = [:]
     }
 
     func testAccessTokenIsReusedAcrossRefreshes() async throws {
@@ -132,6 +133,29 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         let client = Self.makeClient(credentialsStore: StubCredentialsStore(credentials: .init(apiKey: "snapshot", secretKey: "secret")), session: Self.makeSession())
         _ = await client.snapshot(for: StockQuote(symbol: "005930", displayName: nil, exchangeLabel: "KRX", price: 70_000, changePercent: 0, currency: "KRW", timestamp: Date()))
         XCTAssertNil(MockTossInvestURLProtocol.requestCounts["prices"])
+    }
+
+    func testQuotesMapsKoreanMarketStatusPriorityFromStockInfo() async throws {
+        let cases: [(detail: [String: Any], expected: StockMarketStatus)] = [
+            (["liquidationTrading": true, "nxtSupported": true, "krxTradingSuspended": true, "nxtTradingSuspended": true], .liquidationTrading),
+            (["liquidationTrading": false, "nxtSupported": true, "krxTradingSuspended": true, "nxtTradingSuspended": true], .krxTradingSuspended),
+            (["liquidationTrading": false, "nxtSupported": true, "krxTradingSuspended": false, "nxtTradingSuspended": true], .nxtTradingSuspended),
+            (["liquidationTrading": false, "nxtSupported": true, "krxTradingSuspended": false, "nxtTradingSuspended": false], .integratedKRXAndNXT),
+            (["liquidationTrading": false, "nxtSupported": false, "krxTradingSuspended": false], .krxOnly)
+        ]
+        let client = Self.makeClient(
+            credentialsStore: StubCredentialsStore(credentials: .init(apiKey: "status", secretKey: "secret")),
+            session: Self.makeSession()
+        )
+
+        for testCase in cases {
+            MockTossInvestURLProtocol.stockInfoMarketDetails = ["005930": testCase.detail]
+            let quotes = try await client.quotes(for: ["005930"])
+            let quote = try XCTUnwrap(quotes["005930"])
+
+            XCTAssertEqual(quote.exchangeLabel, "KOSPI")
+            XCTAssertEqual(quote.marketStatus, testCase.expected)
+        }
     }
 
     func testSeparatedQuoteAndChartRefreshFetchesPricesOnce() async throws {
@@ -703,7 +727,7 @@ final class TossInvestMarketDataClientCacheTests: XCTestCase {
         XCTAssertEqual(snapshot.series.sessionEnd, sessionStart.addingTimeInterval((7 * 60 + 50) * 60))
         XCTAssertTrue(snapshot.series.sessionDividers.isEmpty)
         XCTAssertEqual(snapshot.series.points.first?.date, sessionStart.addingTimeInterval(10 * 60))
-        XCTAssertEqual(snapshot.quote.exchangeLabel, "BLUE_OCEAN")
+        XCTAssertEqual(snapshot.quote.exchangeLabel, "NASDAQ")
     }
 
     func testCachedChartSeriesSkipsSingleCandleActiveDayMarketCacheOnWeekend() throws {
@@ -1520,6 +1544,7 @@ private final class MockTossInvestURLProtocol: URLProtocol {
     static var priceStatusCodes: [Int] = []
     static var responseHeaders: [String: String] = [:]
     static var requestedSymbolBatchCounts: [Int] = []
+    static var stockInfoMarketDetails: [String: [String: Any]] = [:]
 
     override class func canInit(with request: URLRequest) -> Bool {
         true
@@ -1637,17 +1662,19 @@ private final class MockTossInvestURLProtocol: URLProtocol {
 
     private static func stockInfoResponse(for symbol: String) -> Data {
         let isUSSymbol = StockSymbolInput.marketKind(for: symbol) == .us
+        var stockInfo: [String: Any] = [
+            "symbol": symbol,
+            "name": isUSSymbol ? "Apple" : "삼성전자",
+            "englishName": isUSSymbol ? "Apple" : "Samsung Electronics",
+            "market": isUSSymbol ? "NASDAQ" : "KOSPI",
+            "status": "ACTIVE",
+            "currency": isUSSymbol ? "USD" : "KRW"
+        ]
+        if let detail = stockInfoMarketDetails[symbol] {
+            stockInfo["koreanMarketDetail"] = detail
+        }
         return try! JSONSerialization.data(withJSONObject: [
-            "result": [
-                [
-                    "symbol": symbol,
-                    "name": isUSSymbol ? "Apple" : "삼성전자",
-                    "englishName": isUSSymbol ? "Apple" : "Samsung Electronics",
-                    "market": isUSSymbol ? "NASDAQ" : "KRX",
-                    "status": "ACTIVE",
-                    "currency": isUSSymbol ? "USD" : "KRW"
-                ]
-            ]
+            "result": [stockInfo]
         ], options: [])
     }
 

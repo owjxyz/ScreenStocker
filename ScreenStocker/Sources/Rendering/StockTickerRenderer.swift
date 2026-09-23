@@ -217,6 +217,9 @@ struct StockTickerScreenView: View {
                     HStack(spacing: displayMode.headerSpacing) {
                         VStack(alignment: .leading, spacing: 10) {
                             StatusBadge(title: exchangeLabelText, palette: palette, displayMode: displayMode)
+                            if let marketStatusLabel = quote.marketStatus.label {
+                                StatusBadge(title: marketStatusLabel, palette: palette, displayMode: displayMode)
+                            }
                         }
 
                         Spacer()

@@ -1,9 +1,36 @@
 import Foundation
 
+enum StockMarketStatus: Equatable {
+    case unknown
+    case integratedKRXAndNXT
+    case krxOnly
+    case nxtTradingSuspended
+    case krxTradingSuspended
+    case liquidationTrading
+
+    var label: String? {
+        switch self {
+        case .unknown:
+            nil
+        case .integratedKRXAndNXT:
+            "KRX + NXT Integrated"
+        case .krxOnly:
+            "KRX Quote"
+        case .nxtTradingSuspended:
+            "NXT Trading Halted"
+        case .krxTradingSuspended:
+            "KRX Trading Halted"
+        case .liquidationTrading:
+            "Liquidation Trading"
+        }
+    }
+}
+
 struct StockQuote: Equatable {
     let symbol: String
     var displayName: String?
     var exchangeLabel: String?
+    var marketStatus: StockMarketStatus = .unknown
     let price: Decimal?
     let changePercent: Decimal?
     var currency: String = "KRW"

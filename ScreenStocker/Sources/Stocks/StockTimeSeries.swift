@@ -26,7 +26,6 @@ struct StockChartSeries: Equatable {
     let sessionStart: Date?
     let sessionEnd: Date?
     let sessionDividers: [Date]
-    let trackingExchangeLabel: String?
     let businessDay: String?
 
     init(
@@ -35,7 +34,6 @@ struct StockChartSeries: Equatable {
         sessionStart: Date? = nil,
         sessionEnd: Date? = nil,
         sessionDividers: [Date] = [],
-        trackingExchangeLabel: String? = nil,
         businessDay: String? = nil
     ) {
         self.symbol = symbol
@@ -43,7 +41,6 @@ struct StockChartSeries: Equatable {
         self.sessionStart = sessionStart
         self.sessionEnd = sessionEnd
         self.sessionDividers = sessionDividers
-        self.trackingExchangeLabel = trackingExchangeLabel
         self.businessDay = businessDay
     }
 
