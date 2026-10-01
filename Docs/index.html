@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#0b1020">
+    <meta name="description" content="ScreenStocker는 관심 종목의 가격과 차트를 Mac 화면 보호기에 보여주는 가벼운 macOS 앱입니다.">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="ScreenStocker — 쉬는 화면에도, 관심 종목은 한눈에">
+    <meta property="og:description" content="관심 종목의 가격과 차트를 Mac 화면 보호기에서 확인하세요.">
+    <meta property="og:url" content="https://owjxyz.github.io/screenstocker/">
+    <meta property="og:image" content="https://owjxyz.github.io/screenstocker/screenstocker-dynamic-glass.svg">
+    <link rel="icon" type="image/svg+xml" href="./screenstocker-dynamic-flat.svg">
+    <link rel="stylesheet" href="./site.css">
+    <script src="./site.js" defer></script>
+    <title>ScreenStocker — Mac을 위한 주식 화면 보호기</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">본문으로 건너뛰기</a>
+    <header class="site-header">
+      <nav class="nav wrap" aria-label="주 메뉴">
+        <a class="brand" href="#top" aria-label="ScreenStocker 처음으로">
+          <img src="./screenstocker-dynamic-glass.svg" alt="" width="34" height="34">
+          <span>ScreenStocker</span>
+        </a>
+        <div class="nav-links">
+          <a href="#features">기능</a>
+          <a href="#setup">시작하기</a>
+          <a class="nav-github" href="https://github.com/owjxyz/screenstocker"><img class="github-mark" src="./github-mark.svg" alt="" width="16" height="16">GitHub <span aria-hidden="true">↗</span></a>
+        </div>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="hero" id="top" aria-labelledby="hero-title">
+        <div class="hero-glow" aria-hidden="true"></div>
+        <div class="wrap hero-inner">
+          <div class="hero-copy">
+            <p class="eyebrow"><span class="eyebrow-dot"></span> macOS 화면 보호기</p>
+            <h1 id="hero-title">쉬는 화면에도,<br><em>관심 종목은 한눈에.</em></h1>
+            <p class="hero-description">Mac이 잠시 쉴 때, 내가 고른 종목의 가격 흐름을 보여줍니다. 필요한 정보만 담은 조용한 화면 보호기.</p>
+            <div class="hero-actions">
+              <a class="button button-primary" href="https://github.com/owjxyz/screenstocker#installation"><img class="github-mark" src="./github-mark.svg" alt="" width="18" height="18">설치 방법 보기 <span aria-hidden="true">↗</span></a>
+              <a class="button button-secondary" href="https://github.com/owjxyz/screenstocker"><img class="github-mark" src="./github-mark.svg" alt="" width="18" height="18">GitHub에서 보기 <span aria-hidden="true">↗</span></a>
+            </div>
+            <p class="hero-note">macOS 13 이상 · Toss Invest Open API 자격 증명 필요</p>
+          </div>
+
+          <figure class="hero-figure">
+            <div class="device-frame">
+              <div class="device-camera" aria-hidden="true"></div>
+              <div class="saver-screen saver-dark">
+                <div class="saver-topline">
+                  <span class="market-badge">KRX</span>
+                  <span class="saver-updated">Updated 10:42 KST</span>
+                </div>
+                <svg class="hero-chart" viewBox="0 0 820 330" preserveAspectRatio="none" role="img" aria-label="예시 주가가 오르내리며 전반적으로 상승하는 라인 차트">
+                  <defs><clipPath id="chart-reveal"><rect width="820" height="330"></rect></clipPath></defs>
+                  <path class="chart-grid" d="M0 55H820 M0 128H820 M0 201H820 M0 274H820"></path>
+                  <g clip-path="url(#chart-reveal)">
+                  <path class="chart-area" d="M0 257 C35 238 57 249 88 212 S142 192 180 211 S239 258 277 227 S335 214 369 235 S426 178 463 188 S517 203 550 164 S603 191 642 139 S695 157 729 113 S783 131 820 80 V330 H0Z"></path>
+                  <path class="chart-line" d="M0 257 C35 238 57 249 88 212 S142 192 180 211 S239 258 277 227 S335 214 369 235 S426 178 463 188 S517 203 550 164 S603 191 642 139 S695 157 729 113 S783 131 820 80"></path>
+                  </g>
+                  <circle cx="820" cy="80" r="7" class="chart-point"></circle>
+                </svg>
+                <div class="saver-bottomline">
+                  <div class="saver-metrics">
+                    <span>Open <strong>₩71,800</strong></span>
+                    <span>High <strong>₩72,600</strong></span>
+                    <span>Low <strong>₩71,400</strong></span>
+                  </div>
+                  <div class="saver-price">
+                    <span class="saver-company">ScreenStocker</span>
+                    <strong>₩72,300</strong>
+                    <span class="saver-change">+1.27%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <figcaption>실제 화면 구성에 맞춘 시연 이미지 · 가격과 차트는 예시 데이터</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="intro section" aria-labelledby="intro-title">
+        <div class="wrap intro-grid">
+          <div>
+            <p class="section-kicker">A BETTER IDLE SCREEN</p>
+            <h2 id="intro-title">볼 때는 선명하게.<br>쉴 때는 담백하게.</h2>
+          </div>
+          <p>ScreenStocker는 선택한 한 종목의 현재가, 등락률, 차트와 업데이트 시각을 화면 전체에 펼칩니다. 복잡한 거래 화면을 열지 않아도 시장의 흐름을 가볍게 살펴볼 수 있습니다.</p>
+        </div>
+      </section>
+
+      <section class="features section" id="features" aria-labelledby="features-title">
+        <div class="wrap">
+          <div class="section-heading">
+            <p class="section-kicker">MADE FOR A GLANCE</p>
+            <h2 id="features-title">필요한 것만, 원하는 모습으로.</h2>
+            <p>관심 종목과 화면 표현은 함께 제공되는 관리 앱에서 설정합니다.</p>
+          </div>
+          <div class="feature-grid">
+            <article class="feature-card feature-chart">
+              <div class="feature-icon" aria-hidden="true">⌁</div>
+              <h3>두 가지 차트</h3>
+              <p>간결한 라인 차트와 가격 움직임을 자세히 볼 수 있는 캔들스틱 차트 중 선택하세요.</p>
+              <div class="chart-pair" aria-hidden="true">
+                <div class="mini-chart mini-line">
+                  <span>LINE</span>
+                  <svg viewBox="0 0 220 76" preserveAspectRatio="none"><path d="M0 58L33 51L63 57L91 30L121 38L151 19L181 31L220 8"></path></svg>
+                </div>
+                <div class="mini-chart mini-candles">
+                  <span>CANDLE</span>
+                  <svg viewBox="0 0 220 76" preserveAspectRatio="none">
+                    <path d="M20 18V62 M55 12V55 M90 26V67 M125 8V47 M160 20V59 M195 5V46"></path>
+                    <rect x="14" y="29" width="12" height="23"></rect><rect x="49" y="22" width="12" height="18"></rect><rect x="84" y="36" width="12" height="19"></rect><rect x="119" y="17" width="12" height="19"></rect><rect x="154" y="32" width="12" height="18"></rect><rect x="189" y="14" width="12" height="20"></rect>
+                  </svg>
+                </div>
+              </div>
+            </article>
+            <article class="feature-card">
+              <div class="feature-icon" aria-hidden="true">◎</div>
+              <h3>내 관심 종목</h3>
+              <p>관리 앱에서 한국 주식 코드나 미국 주식 티커를 관심 목록에 추가하고, 화면에 표시할 종목을 고릅니다.</p>
+            </article>
+            <article class="feature-card">
+              <div class="feature-icon" aria-hidden="true">◐</div>
+              <h3>화면에 맞는 색</h3>
+              <p>라이트, 다크, 시스템 설정을 따르는 자동 모드로 Mac의 분위기에 맞춰 표시합니다.</p>
+            </article>
+            <article class="feature-card">
+              <div class="feature-icon" aria-hidden="true">↻</div>
+              <h3>1분 간격 갱신</h3>
+              <p>화면 보호기가 실행되는 동안 시세와 차트 데이터를 1분 간격으로 새로 확인합니다.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="setup section" id="setup" aria-labelledby="setup-title">
+        <div class="wrap setup-grid">
+          <div class="setup-heading">
+            <p class="section-kicker">GET STARTED</p>
+            <h2 id="setup-title">설정은 앱에서.<br>표시는 화면 보호기에서.</h2>
+            <p>처음 한 번 설정하면, 선택한 종목이 Mac의 화면 보호기에 나타납니다.</p>
+            <a class="text-link" href="https://github.com/owjxyz/screenstocker#installation"><img class="github-mark" src="./github-mark.svg" alt="" width="17" height="17">전체 설치 안내 보기 <span aria-hidden="true">↗</span></a>
+          </div>
+          <ol class="steps">
+            <li><span class="step-number">01</span><div><h3>API 자격 증명 저장</h3><p>관리 앱에 Toss Invest Open API 키를 입력합니다. 키는 macOS Keychain에 저장됩니다.</p></div></li>
+            <li><span class="step-number">02</span><div><h3>관심 종목과 화면 설정</h3><p>관심 목록을 만들고, 표시할 종목·차트 스타일·화면 모드를 선택합니다.</p></div></li>
+            <li><span class="step-number">03</span><div><h3>화면 보호기 적용</h3><p>관리 앱에서 화면 보호기를 설치한 뒤 macOS 시스템 설정에서 ScreenStocker를 선택합니다.</p></div></li>
+          </ol>
+        </div>
+      </section>
+
+      <section class="requirements section" aria-labelledby="requirements-title">
+        <div class="wrap requirements-inner">
+          <div>
+            <p class="section-kicker">BEFORE YOU START</p>
+            <h2 id="requirements-title">시작하기 전에</h2>
+          </div>
+          <ul>
+            <li>macOS 13 Ventura 이상</li>
+            <li>인터넷 연결</li>
+            <li><a href="https://corp.tossinvest.com/ko/open-api">Toss Invest Open API</a> 자격 증명</li>
+          </ul>
+          <p>현재 저장소의 설치 안내는 소스에서 직접 빌드하는 방법을 설명합니다. 빌드에는 XcodeGen이 필요합니다.</p>
+        </div>
+      </section>
+
+      <section class="closing section" aria-labelledby="closing-title">
+        <div class="wrap closing-inner">
+          <img src="./screenstocker-dynamic-glass.svg" alt="" width="68" height="68">
+          <h2 id="closing-title">쉬는 화면을, 관심 있는 화면으로.</h2>
+          <p>ScreenStocker의 소스와 설치 방법을 확인하세요.</p>
+          <a class="button button-primary" href="https://github.com/owjxyz/screenstocker"><img class="github-mark" src="./github-mark.svg" alt="" width="18" height="18">GitHub에서 시작하기 <span aria-hidden="true">↗</span></a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="wrap footer-inner">
+        <span>© ScreenStocker</span>
+        <div><a href="https://github.com/owjxyz/screenstocker"><img class="github-mark" src="./github-mark.svg" alt="" width="14" height="14">GitHub</a><a href="https://github.com/owjxyz/screenstocker/issues"><img class="github-mark" src="./github-mark.svg" alt="" width="14" height="14">문의 및 제안</a><a href="https://seed.line.me/index_kr.html">글꼴: LINE Seed KR</a></div>
+      </div>
+    </footer>
+  </body>
+</html>
