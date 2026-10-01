@@ -57,6 +57,30 @@ final class StockQuoteTests: XCTestCase {
         XCTAssertEqual(StockSymbolInput.normalizedSymbol(from: " 005930 "), "005930")
     }
 
+    func testSymbolInputClassifiesAlphanumericKRXCodes() throws {
+        for (rawValue, expected) in [("46520A", "46520A"), (" 46520a ", "46520A"), ("0101N0", "0101N0")] {
+            let symbol = try XCTUnwrap(StockSymbolInput.normalizedSymbol(from: rawValue))
+            XCTAssertEqual(symbol, expected)
+            XCTAssertEqual(StockSymbolInput.marketKind(for: symbol), .krx)
+        }
+        XCTAssertEqual(StockSymbolInput.marketKind(for: "005930"), .krx)
+        for symbol in ["AAPL", "BRK.B", "GOOGL", "ABCDEF", "BRK123", "46520AB", "4ABC"] {
+            XCTAssertEqual(StockSymbolInput.marketKind(for: symbol), .us)
+        }
+    }
+
+    func testPreferencesDeduplicateAlphanumericKRXCodes() {
+        let suiteName = "com.tasokiii.ScreenStocker.tests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let preferences = StockerPreferences(defaults: defaults, usesSharedPreferences: false)
+
+        preferences.registeredSymbols = [" 46520a ", "46520A", "005930", " brk.b ", "BRK.B"]
+
+        XCTAssertEqual(preferences.registeredSymbols, ["46520A", "005930", "BRK.B"])
+        XCTAssertTrue(preferences.registeredSymbols.contains("46520A"))
+    }
+
     func testSymbolInputNormalizesUSTicker() {
         XCTAssertEqual(StockSymbolInput.normalizedSymbol(from: " brk.b "), "BRK.B")
     }
