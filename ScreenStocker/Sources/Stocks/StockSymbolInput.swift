@@ -10,7 +10,7 @@ enum StockSymbolInput {
         let normalized = rawValue.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         guard !normalized.isEmpty else { return nil }
 
-        if normalized.range(of: #"^\d{6}$"#, options: .regularExpression) != nil {
+        if marketKind(for: normalized) == .krx {
             return normalized
         }
 
@@ -22,8 +22,8 @@ enum StockSymbolInput {
     }
 
     static func marketKind(for normalizedSymbol: String) -> MarketKind {
-        normalizedSymbol.range(of: #"^\d{6}$"#, options: .regularExpression) != nil ? .krx : .us
+        normalizedSymbol.range(of: #"^\d[A-Z\d]{5}$"#, options: .regularExpression) != nil ? .krx : .us
     }
 
-    static let validationMessage = "Enter a KRX 6-digit code like 005930 or a US ticker like AAPL."
+    static let validationMessage = "Enter a KRX 6-character code like 005930 or 46520A or a US ticker like AAPL."
 }
