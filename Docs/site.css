@@ -34,6 +34,8 @@ body { margin: 0; }
 a { color: inherit; }
 img, svg { display: block; max-width: 100%; }
 h1, h2, h3, p, figure { margin: 0; }
+h1, h2, h3 { word-break: keep-all; overflow-wrap: anywhere; text-wrap: balance; }
+p, figcaption { word-break: keep-all; overflow-wrap: anywhere; text-wrap: pretty; }
 .wrap { width: min(1160px, calc(100% - 48px)); margin-inline: auto; }
 .section { padding-block: 112px; }
 .skip-link { position: absolute; z-index: 20; left: 16px; top: -60px; padding: 12px 16px; background: #fff; color: #111; }
@@ -74,7 +76,7 @@ h1 em { font-style: normal; color: #bcb5ff; }
 .hero-figure { margin-top: 82px; }
 .device-frame { position: relative; padding: 13px; border: 1px solid #5d6381; border-radius: 24px; background: linear-gradient(145deg, #3b4159, #191c2a 27%, #555c75 51%, #202331 75%); box-shadow: 0 36px 90px #0008, 0 0 70px #9690ff24; }
 .device-camera { position: absolute; z-index: 1; top: 3px; left: 50%; width: 45px; height: 8px; transform: translateX(-50%); border-radius: 0 0 8px 8px; background: #11131d; }
-.saver-screen { font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif; position: relative; aspect-ratio: 16 / 8.6; min-height: 320px; overflow: hidden; border: 1px solid #141722; border-radius: 13px; padding: 5% 6%; }
+.saver-screen { font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif; position: relative; width: 100%; aspect-ratio: 16 / 8.6; min-height: 320px; overflow: hidden; border: 1px solid #141722; border-radius: 13px; padding: 5% 6%; }
 .saver-dark { color: white; background: #050507; }
 .saver-topline, .saver-bottomline { display: flex; justify-content: space-between; }
 .saver-topline { align-items: start; }
@@ -161,14 +163,15 @@ h2 { margin-top: 16px; font-size: clamp(32px, 3.6vw, 48px); line-height: 1.25; l
 
 @media (max-width: 620px) {
   .wrap { width: min(100% - 36px, 460px); }
-  .nav { min-height: 70px; }
-  .brand { font-size: 16px; }
+  .nav { min-height: 70px; gap: 12px; }
+  .brand { font-size: 16px; white-space: nowrap; }
   .brand img { width: 30px; height: 30px; }
   .nav-links { gap: 13px; font-size: 12px; }
   .nav-links a:not(.nav-github) { display: none; }
   .nav-links .nav-github { padding: 8px 11px; }
   .hero-inner { padding-top: 132px; padding-bottom: 76px; }
-  h1 { font-size: clamp(38px, 9vw, 52px); }
+  h1 { font-size: clamp(32px, 9.2vw, 52px); }
+  h2 { font-size: clamp(26px, 7.5vw, 32px); }
   .hero-description { margin-top: 20px; font-size: 15px; }
   .hero-actions { margin-top: 26px; }
   .button { width: 100%; }
@@ -177,6 +180,7 @@ h2 { margin-top: 16px; font-size: clamp(32px, 3.6vw, 48px); line-height: 1.25; l
   .device-camera { width: 30px; height: 4px; }
   .saver-screen { min-height: 190px; border-radius: 8px; }
   .saver-metrics { gap: 9px; }
+  .saver-bottomline { gap: 8px; }
   .saver-metrics span { font-size: 8px; }
   .saver-metrics strong { font-size: 8px; }
   .saver-price strong { font-size: 22px; }
@@ -190,6 +194,7 @@ h2 { margin-top: 16px; font-size: clamp(32px, 3.6vw, 48px); line-height: 1.25; l
   .feature-chart, .feature-grid .feature-card:last-child { grid-column: auto; }
   .chart-pair { display: flex; }
   .setup-grid { gap: 42px; }
+  .steps li { grid-template-columns: 32px minmax(0, 1fr); gap: 14px; }
   .requirements ul { font-size: 15px; }
   .requirements-inner > p { grid-column: 1; margin-top: 0; }
   .footer-inner { align-items: start; flex-direction: column; justify-content: center; gap: 12px; padding-block: 24px; }
