@@ -18,7 +18,7 @@ const preview = {
   },
 };
 vm.runInNewContext(fs.readFileSync("Docs/site.js", "utf8"), {
-  document: { querySelector: () => preview },
+  document: { querySelector: (selector) => selector === ".device-frame" ? preview : null },
   matchMedia: () => reducedMotion,
   innerHeight: 1000,
   addEventListener: (name, handler) => { events[name] = handler; },
