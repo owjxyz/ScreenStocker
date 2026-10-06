@@ -109,7 +109,8 @@ h2 { margin-top: 16px; font-size: clamp(32px, 3.6vw, 48px); line-height: 1.25; l
 .feature-card { min-height: 274px; padding: 28px; border: 1px solid #e6e7ef; border-radius: 20px; background: #fff; box-shadow: 0 8px 30px #1b275006; }
 .feature-card h3 { margin-top: 28px; font-size: 20px; letter-spacing: -.04em; }
 .feature-card p { margin-top: 12px; color: #667080; line-height: 1.7; font-size: 14px; word-break: keep-all; }
-.feature-icon { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 13px; background: #efedff; color: #675bd2; font-size: 28px; line-height: 1; }
+.feature-icon { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 13px; background: #efedff; color: #675bd2; }
+.feature-icon svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .feature-chart { grid-column: span 2; }
 .chart-pair { display: flex; gap: 12px; margin-top: 24px; }
 .mini-chart { flex: 1; min-width: 0; height: 90px; padding: 12px; border-radius: 12px; background: #101421; }
