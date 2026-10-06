@@ -15,8 +15,9 @@
 }
 
 :root {
-  /* SwiftUI Color.red resolved to sRGB on macOS 27, with its system appearance variants. */
+  /* SwiftUI colors resolved to sRGB on macOS 27, with their system appearance variants. */
   --saver-red: #ff383c;
+  --saver-blue: #0088ff;
   color-scheme: light;
   font-family: "LINE Seed Sans KR", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
   font-synthesis: none;
@@ -25,7 +26,7 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root { --saver-red: #ff4245; }
+  :root { --saver-red: #ff4245; --saver-blue: #0091ff; }
 }
 
 * { box-sizing: border-box; }
@@ -117,8 +118,10 @@ h2 { margin-top: 16px; font-size: clamp(32px, 3.6vw, 48px); line-height: 1.25; l
 .mini-chart span { color: #969ab3; font-size: 10px; font-weight: 700; letter-spacing: .12em; }
 .mini-chart svg { width: 100%; height: 53px; }
 .mini-line path { fill: none; stroke: var(--saver-red); stroke-width: 3; }
-.mini-candles path { stroke: #9ca5fa; stroke-width: 2; }
-.mini-candles rect { fill: #9ca5fa; }
+.mini-candles g { color: var(--saver-red); }
+.mini-candles .candle-down { color: var(--saver-blue); }
+.mini-candles path { fill: none; stroke: currentColor; stroke-width: 2; stroke-opacity: .78; }
+.mini-candles rect { fill: currentColor; }
 .feature-grid .feature-card:last-child { grid-column: span 2; }
 
 .setup { color: #fff; background: #171b2d; }

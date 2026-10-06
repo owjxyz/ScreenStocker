@@ -11,7 +11,7 @@
     <meta property="og:url" content="https://owjxyz.github.io/ScreenStocker/">
     <meta property="og:image" content="https://owjxyz.github.io/ScreenStocker/screenstocker-dynamic-glass.svg">
     <link rel="icon" type="image/svg+xml" href="./screenstocker-dynamic-flat.svg">
-    <link rel="stylesheet" href="./site.css?v=20261006-icons">
+    <link rel="stylesheet" href="./site.css?v=20261006-feature-charts">
     <script src="./site.js" defer></script>
     <title>ScreenStocker — Mac을 위한 주식 화면 보호기</title>
   </head>
@@ -102,7 +102,7 @@
           </div>
           <div class="feature-grid">
             <article class="feature-card feature-chart">
-              <div class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 9l7 4v-2l7 4"></path></svg></div>
+              <div class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 16l5-5 6 3 5-6"></path></svg></div>
               <h3>두 가지 차트</h3>
               <p>간결한 라인 차트와 가격 움직임을 자세히 볼 수 있는 캔들스틱 차트 중 선택하세요.</p>
               <div class="chart-pair" aria-hidden="true">
@@ -113,8 +113,12 @@
                 <div class="mini-chart mini-candles">
                   <span>CANDLE</span>
                   <svg viewBox="0 0 220 76" preserveAspectRatio="none">
-                    <path d="M20 18V62 M55 12V55 M90 26V67 M125 8V47 M160 20V59 M195 5V46"></path>
-                    <rect x="14" y="29" width="12" height="23"></rect><rect x="49" y="22" width="12" height="18"></rect><rect x="84" y="36" width="12" height="19"></rect><rect x="119" y="17" width="12" height="19"></rect><rect x="154" y="32" width="12" height="18"></rect><rect x="189" y="14" width="12" height="20"></rect>
+                    <g><path d="M20 18V62"></path><rect x="14" y="29" width="12" height="23" rx="2"></rect></g>
+                    <g><path d="M55 12V55"></path><rect x="49" y="22" width="12" height="18" rx="2"></rect></g>
+                    <g class="candle-down"><path d="M90 26V67"></path><rect x="84" y="36" width="12" height="19" rx="2"></rect></g>
+                    <g><path d="M125 8V47"></path><rect x="119" y="17" width="12" height="19" rx="2"></rect></g>
+                    <g class="candle-down"><path d="M160 20V59"></path><rect x="154" y="32" width="12" height="18" rx="2"></rect></g>
+                    <g><path d="M195 5V46"></path><rect x="189" y="14" width="12" height="20" rx="2"></rect></g>
                   </svg>
                 </div>
               </div>
@@ -130,7 +134,7 @@
               <p>라이트, 다크, 시스템 설정을 따르는 자동 모드로 Mac의 분위기에 맞춰 표시합니다.</p>
             </article>
             <article class="feature-card">
-              <div class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 1 9 9M3 16v-4h4"></path></svg></div>
+              <div class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 7v5h-5M20 12a8 8 0 1 1-2.34-5.66L20 12"></path></svg></div>
               <h3>1분 간격 갱신</h3>
               <p>화면 보호기가 실행되는 동안 시세와 차트 데이터를 1분 간격으로 새로 확인합니다.</p>
             </article>
