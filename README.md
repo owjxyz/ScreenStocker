@@ -10,7 +10,7 @@ ScreenStocker is a lightweight macOS screen saver that shows the current price s
 
 Use the companion app to manage your watchlist and display settings.
 
-[한국어 README 보기](Docs/README.ko.md)
+[한국어](Docs/README.ko.md)
 
 ## Key Features
 
